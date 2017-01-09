@@ -1,30 +1,30 @@
-name:                asn1-records
-version:             0.1.0.0
-synopsis:            Initial project template from stack
-description:         Please see README.md
-homepage:            https://github.com/andrewthad/asn1-records#readme
+name:                asn1-codec
+version:             0.1.0
+synopsis:            Encode and decode ASN.1
+description:         Add a better description later
+homepage:            https://github.com/andrewthad/asn1-codec
 license:             BSD3
 license-file:        LICENSE
 author:              Andrew Martin
 maintainer:          andrew.thaddeus@gmail.com
-copyright:           2016 Andrew Martin
+copyright:           2017 Andrew Martin
 category:            web
 build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  hs-source-dirs:      src
+  hs-source-dirs: src
   exposed-modules:
-    Lib
     Encode
     Recode
   build-depends:
       base >= 4.7 && < 5
-    , vinyl-plus
+    , integer-gmp
     , bytestring
     , contravariant
     , vector
     , pretty
+    , text
   default-language:    Haskell2010
 
 test-suite asn1-records-test
@@ -33,8 +33,8 @@ test-suite asn1-records-test
   main-is:             Spec.hs
   build-depends:       base
                      , asn1-records
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
-  default-language:    Haskell2010
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  default-language: Haskell2010
 
 source-repository head
   type:     git
