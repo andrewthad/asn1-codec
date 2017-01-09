@@ -1,0 +1,12 @@
+World-Schema DEFINITIONS EXPLICIT TAGS ::=
+BEGIN
+  Human ::= SEQUENCE {
+     name UTF8String,
+     first-words UTF8String DEFAULT "Hello World",
+     age  CHOICE {
+        biblical [0] INTEGER (1..1000),
+        modern   [1] INTEGER (1..100)
+     } OPTIONAL
+  }
+END
+

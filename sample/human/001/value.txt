@@ -1,0 +1,6 @@
+first-man Human ::=
+{
+    name "Adam",
+    age biblical: 930
+}
+

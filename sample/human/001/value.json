@@ -1,0 +1,8 @@
+{
+  "name": "Adam",
+  "first_words": "Hello World",
+  "age": {
+    "tag": "biblical",
+    "contents": 930
+  }
+}

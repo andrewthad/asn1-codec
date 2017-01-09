@@ -1,0 +1,7 @@
+World-Schema DEFINITIONS EXPLICIT TAGS ::=
+BEGIN
+  Foo ::= SEQUENCE {
+     size INTEGER,
+     identifier OBJECT IDENTIFIER
+  }
+END
