@@ -17,6 +17,8 @@ library
   exposed-modules:
     Encode
     Recode
+    Net.Snmp.Types
+    Net.Snmp.Encoding
   build-depends:
       base >= 4.7 && < 5
     , integer-gmp

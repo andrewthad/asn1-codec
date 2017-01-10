@@ -28,10 +28,10 @@ import qualified Data.ByteString.Builder as Builder
 import qualified Data.List as List
 import qualified Data.Vector as Vector
 
-data Enc a
+data AsnEncoding a
   = EncSequence [Field a]
   | EncChoice (Choice a)
-  | EncRetag TagAndExplicitness (Enc a)
+  | EncRetag TagAndExplicitness (AsnEncoding a)
   | EncUniversalValue (UniversalValue a)
 
 data UniversalValue a
@@ -81,11 +81,11 @@ instance Num TagAndExplicitness where
 data IntegerBounds = IntegerBounds Integer Integer
 
 data Choice a = Choice [a] (a -> ValueAndEncoding)
-data ValueAndEncoding = forall b. ValueAndEncoding Int OptionName b (Enc b)
+data ValueAndEncoding = forall b. ValueAndEncoding Int OptionName b (AsnEncoding b)
 data Field a
-  = forall b. FieldRequired FieldName (a -> b) (Enc b)
-  | forall b. FieldOptional FieldName (a -> Maybe b) (Enc b)
-  | forall b. FieldDefaulted FieldName (a -> b) b (b -> String) (b -> b -> Bool) (Enc b)
+  = forall b. FieldRequired FieldName (a -> b) (AsnEncoding b)
+  | forall b. FieldOptional FieldName (a -> Maybe b) (AsnEncoding b)
+  | forall b. FieldDefaulted FieldName (a -> b) b (b -> String) (b -> b -> Bool) (AsnEncoding b)
 
 data TaggedByteString = TaggedByteString Construction Tag LB.ByteString
 data Construction = Constructed | Primitive
@@ -113,9 +113,9 @@ tagClassPrefix x = case x of
   TagClassApplication -> "APPLICATION "
   TagClassContextSpecific -> ""
 
-prettyPrintEnc :: Enc a -> String
+prettyPrintEnc :: AsnEncoding a -> String
 prettyPrintEnc = PP.render . go where
-  go :: forall b. Enc b -> PP.Doc
+  go :: forall b. AsnEncoding b -> PP.Doc
   go (EncUniversalValue u) = prettyPrintUniversalValue u
   go (EncRetag (TagAndExplicitness theTag expl) e) =
     PP.text (prettyPrintTag theTag ++ " " ++ ppExplicitness expl ++ " ") <> go e
@@ -193,44 +193,66 @@ strSubtype f x = case x of
 makeTag :: TagClass -> Int -> Tag
 makeTag = Tag
 
-sequence :: [Field a] -> Enc a
+sequence :: [Field a] -> AsnEncoding a
 sequence = EncSequence
 
-choice :: [a] -> (a -> ValueAndEncoding) -> Enc a
+choice :: [a] -> (a -> ValueAndEncoding) -> AsnEncoding a
 choice xs f = EncChoice (Choice xs f)
 
-option :: Int -> OptionName -> b -> Enc b -> ValueAndEncoding
+option :: Int -> OptionName -> b -> AsnEncoding b -> ValueAndEncoding
 option = ValueAndEncoding
 
-tag :: TagAndExplicitness -> Enc a -> Enc a
+tag :: TagAndExplicitness -> AsnEncoding a -> AsnEncoding a
 tag = EncRetag
 
-required :: FieldName -> (a -> b) -> Enc b -> Field a
+implicitTag :: Tag -> AsnEncoding a -> AsnEncoding a
+implicitTag t = EncRetag (TagAndExplicitness t Implicit)
+
+required :: FieldName -> (a -> b) -> AsnEncoding b -> Field a
 required = FieldRequired
 
-optional :: FieldName -> (a -> Maybe b) -> Enc b -> Field a
+optional :: FieldName -> (a -> Maybe b) -> AsnEncoding b -> Field a
 optional = FieldOptional
 
-defaulted :: (Eq b, Show b) => FieldName -> (a -> b) -> Enc b -> b -> Field a
+defaulted :: (Eq b, Show b) => FieldName -> (a -> b) -> AsnEncoding b -> b -> Field a
 defaulted name getVal enc defVal = FieldDefaulted name getVal defVal show (==) enc
 
-objectIdentifier :: Enc ObjectIdentifier
+objectIdentifier :: AsnEncoding ObjectIdentifier
 objectIdentifier = EncUniversalValue (UniversalValueObjectIdentifier id mempty)
 
-integer :: Enc Integer
+integer :: AsnEncoding Integer
 integer = EncUniversalValue (UniversalValueInteger id mempty)
 
-integerRanged :: Integer -> Integer -> Enc Integer
+integerRanged :: Integer -> Integer -> AsnEncoding Integer
 integerRanged lo hi = EncUniversalValue
   (UniversalValueInteger id (Subtypes [SubtypeValueRange lo hi]))
 
-octetString :: Enc ByteString
+word32 :: AsnEncoding Word32
+word32 = EncUniversalValue (UniversalValueInteger fromIntegral (Subtypes [SubtypeValueRange 0 4294967295]))
+
+word64 :: AsnEncoding Word64
+word64 = EncUniversalValue (UniversalValueInteger fromIntegral (Subtypes [SubtypeValueRange 0 18446744073709551615]))
+
+-- TODO: add a size subtype to this
+octetStringWord32 :: AsnEncoding Word32
+octetStringWord32 = EncUniversalValue (UniversalValueOctetString (LB.toStrict . Builder.toLazyByteString . Builder.word32BE) mempty) 
+
+int32 :: AsnEncoding Int32
+int32 = EncUniversalValue (UniversalValueInteger fromIntegral (Subtypes [SubtypeValueRange (-2147483648) 2147483647]))
+
+word :: AsnEncoding Word
+word = EncUniversalValue (UniversalValueInteger fromIntegral (Subtypes [SubtypeValueRange 0 (fromIntegral (maxBound :: Word))]))
+
+int :: AsnEncoding Int
+int = EncUniversalValue (UniversalValueInteger fromIntegral (Subtypes [SubtypeValueRange (fromIntegral (minBound :: Int)) (fromIntegral (maxBound :: Int))]))
+
+octetString :: AsnEncoding ByteString
 octetString = EncUniversalValue (UniversalValueOctetString id mempty)
 
-utf8String :: Enc Text
+utf8String :: AsnEncoding Text
 utf8String = EncUniversalValue (UniversalValueTextualString Utf8String id mempty mempty)
 
-person :: Enc Person
+person :: AsnEncoding Person
 person = sequence
   [ required "name" personName octetString
   , required "age" personAge integer
@@ -252,12 +274,12 @@ univsersalValueConstruction x = case x of
   UniversalValueTextualString _ _ _ _ -> Primitive
   UniversalValueObjectIdentifier _ _ -> Primitive
 
-encodeBer :: Enc a -> a -> LB.ByteString
+encodeBer :: AsnEncoding a -> a -> LB.ByteString
 encodeBer e = encodeTaggedByteString . encodeBerInternal e
 
 -- | The ByteString that accompanies the tag does not
 --   include its own length.
-encodeBerInternal :: Enc a -> a -> TaggedByteString
+encodeBerInternal :: AsnEncoding a -> a -> TaggedByteString
 encodeBerInternal x a = case x of
   EncRetag (TagAndExplicitness outerTag explicitness) e ->
     let TaggedByteString construction innerTag lbs = encodeBerInternal e a
@@ -356,7 +378,7 @@ data Concern
 --
 -- data Age = AgeBiblical Integer | AgeModern Integer
 --
--- human :: Enc Human
+-- human :: AsnEncoding Human
 -- human = sequence
 --   [ required "name" humanName utf8String
 --   , defaulted "first-words" humanFirstWords utf8String "Hello World"
@@ -366,7 +388,7 @@ data Concern
 -- exampleHuman :: Human
 -- exampleHuman = Human "Adam" "Hello World" (Just $ AgeBiblical 900)
 --
--- age :: Enc Age
+-- age :: AsnEncoding Age
 -- age = choice [AgeBiblical 0, AgeModern 0] $ \x -> case x of
 --   AgeBiblical n -> option 0 "biblical" n $ tag 0 $ integerRanged 0 1000
 --   AgeModern n -> option 1 "modern" n $ tag 1 $ integerRanged 0 100

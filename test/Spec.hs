@@ -45,7 +45,7 @@ data Foo = Foo
   , fooIdentifier :: ObjectIdentifier
   }
 
-testEncoding :: Aeson.FromJSON a => String -> Enc a -> String -> Test
+testEncoding :: Aeson.FromJSON a => String -> AsnEncoding a -> String -> Test
 testEncoding name enc dirNum = testCase dirNum $ do
   let path = "sample/" ++ name ++ "/" ++ dirNum ++ "/"
   valueLbs <- fmap LB.fromStrict $ BS.readFile (path ++ "value.json")
@@ -56,20 +56,20 @@ testEncoding name enc dirNum = testCase dirNum $ do
   let encodedLbs = encodeBer enc a
   hexByteString encodedLbs @?= LBC8.unpack (LBC8.filter (not . isSpace) resultLbs)
 
-encHuman :: Enc Human
+encHuman :: AsnEncoding Human
 encHuman = sequence
   [ required "name" humanName utf8String
   , defaulted "first-words" humanFirstWords utf8String "Hello World"
   , optional "age" humanAge encAge
   ]
 
-encFoo :: Enc Foo
+encFoo :: AsnEncoding Foo
 encFoo = sequence
   [ required "size" fooSize integer
   , required "identifier" fooIdentifier objectIdentifier
   ]
 
-encAge :: Enc Age
+encAge :: AsnEncoding Age
 encAge = choice [AgeBiblical 0, AgeModern 0] $ \x -> case x of
   AgeBiblical n -> option 0 "biblical" n $ tag 0 $ integerRanged 0 1000
   AgeModern n -> option 1 "modern" n $ tag 1 $ integerRanged 0 100
