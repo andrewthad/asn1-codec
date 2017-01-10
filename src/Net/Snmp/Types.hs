@@ -34,7 +34,7 @@ data VarBind = VarBind
   , varBindResult :: !BindingResult
   }
 
-data BindingResult 
+data BindingResult
   = BindingResultValue ObjectSyntax
   | BindingResultUnspecified
   | BindingResultNoSuchObject
@@ -49,12 +49,16 @@ data Pdus
   | PdusSetRequest Pdu
   | PdusInformRequest Pdu
   | PdusSnmpTrap Pdu
-  | PdusReportPdu Pdu
+  | PdusReport Pdu
 
-data MessageV2 = Message
-  { messageV2Version :: !Int
-  , messageV2CommunityString :: !ByteString
-  , messageV2Pdu :: !Pdus
+-- | A message as defined by RFC1157. The @version@ field is omitted
+--   since it is required to be 1. The encoding and decoding of 'Message'
+--   do have this field present though.
+data MessageV2 = MessageV2
+  { messageV2CommunityString :: !ByteString
+  , messageV2Data :: !Pdus
+    -- ^ In the ASN.1 definition of @Message@, this field is an @ANY@.
+    --   In practice, it is always @PDUs@.
   }
 
 -- data MessageV3 = MessageV3
@@ -63,7 +67,7 @@ data MessageV2 = Message
 --   , messageV3SecurityParameters :: !ByteString
 --   , messageV3Data :: !ScopedPduData
 --   }
--- 
+--
 -- data HeaderData = HeaderData
 --   { headerDataId :: !MessageId
 --   , headerDataMaxSize :: !Int

@@ -1,0 +1,4 @@
+World-Schema DEFINITIONS EXPLICIT TAGS ::=
+BEGIN
+  Texts ::= SEQUENCE OF UTF8String
+END

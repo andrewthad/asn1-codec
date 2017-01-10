@@ -1,0 +1,15 @@
+thing Message ::=
+{
+  version 1,
+  community 'BBBB'H,
+  data get-request:
+  {
+    request-id 100000000,
+    error-status 0,
+    error-index 0,
+    variable-bindings { {
+      name {1 3 6 129},
+      result value: application-wide: counter-value: 9
+    } }
+  }
+}

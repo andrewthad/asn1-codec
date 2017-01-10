@@ -9,7 +9,7 @@
 
 module Recode where
 
-import Prelude hiding (sequence)
+import Prelude hiding (sequence,null)
 import Data.String
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder (Builder)
@@ -21,6 +21,7 @@ import Data.Bits
 import Data.Vector (Vector)
 import GHC.Int (Int(..))
 import GHC.Integer.Logarithms (integerLog2#)
+import Data.Foldable
 import qualified Data.Text.Encoding as TE
 import qualified Text.PrettyPrint as PP
 import qualified Data.ByteString.Lazy as LB
@@ -30,6 +31,7 @@ import qualified Data.Vector as Vector
 
 data AsnEncoding a
   = EncSequence [Field a]
+  | forall b. EncSequenceOf (a -> [b]) (AsnEncoding b)
   | EncChoice (Choice a)
   | EncRetag TagAndExplicitness (AsnEncoding a)
   | EncUniversalValue (UniversalValue a)
@@ -37,6 +39,7 @@ data AsnEncoding a
 data UniversalValue a
   = UniversalValueBoolean (a -> Bool) (Subtypes Bool)
   | UniversalValueInteger (a -> Integer) (Subtypes Integer)
+  | UniversalValueNull
   | UniversalValueOctetString (a -> ByteString) (Subtypes ByteString)
   | UniversalValueTextualString StringType (a -> Text) (Subtypes Text) (Subtypes Char)
   | UniversalValueObjectIdentifier (a -> ObjectIdentifier) (Subtypes ObjectIdentifier)
@@ -77,6 +80,15 @@ instance Num TagAndExplicitness where
   fromInteger n = TagAndExplicitness
     (Tag TagClassContextSpecific (fromIntegral n))
     Explicit
+
+instance Num Tag where
+  (+) = error "Tag does not support addition"
+  (-) = error "Tag does not support subtraction"
+  (*) = error "Tag does not support multiplication"
+  abs = error "Tag does not support abs"
+  signum = error "Tag does not support signum"
+  negate = error "Tag does not support negate"
+  fromInteger n = Tag TagClassContextSpecific (fromIntegral n)
 
 data IntegerBounds = IntegerBounds Integer Integer
 
@@ -125,6 +137,7 @@ prettyPrintEnc = PP.render . go where
   go (EncSequence fields) = (PP.$+$)
     "SEQUENCE"
     ( PP.nest 2 $ PP.vcat $ map ppField fields)
+  go (EncSequenceOf _ e) = PP.text "SEQUENCE OF" PP.<+> go e
   ppField :: forall b. Field b -> PP.Doc
   ppField x = case x of
     FieldRequired (FieldName name) _ e -> PP.text (name ++ " ") <> go e
@@ -146,6 +159,7 @@ prettyPrintUniversalValue :: UniversalValue x -> PP.Doc
 prettyPrintUniversalValue x = case x of
   UniversalValueBoolean _ _ -> PP.text "BOOLEAN"
   UniversalValueInteger _ ss -> PP.text $ "INTEGER" ++ strSubtypes show ss
+  UniversalValueNull -> PP.text "NULL"
   UniversalValueOctetString _ _ -> PP.text "OCTET STRING"
   UniversalValueObjectIdentifier _ _ -> PP.text "OBJECT IDENTIFIER"
   UniversalValueTextualString typ _ _ _ -> PP.text (strStringType typ)
@@ -196,6 +210,9 @@ makeTag = Tag
 sequence :: [Field a] -> AsnEncoding a
 sequence = EncSequence
 
+sequenceOf :: Foldable f => AsnEncoding a -> AsnEncoding (f a)
+sequenceOf = EncSequenceOf toList
+
 choice :: [a] -> (a -> ValueAndEncoding) -> AsnEncoding a
 choice xs f = EncChoice (Choice xs f)
 
@@ -220,6 +237,15 @@ defaulted name getVal enc defVal = FieldDefaulted name getVal defVal show (==) e
 objectIdentifier :: AsnEncoding ObjectIdentifier
 objectIdentifier = EncUniversalValue (UniversalValueObjectIdentifier id mempty)
 
+null :: AsnEncoding ()
+null = null'
+
+-- | Anything can be encoded as @NULL@ by simply discarding it. Typically,
+--   encoding a type with more than one inhabitant as @NULL@ is a mistake,
+--   so the more restrictive 'null' is to be preferred.
+null' :: AsnEncoding a
+null' = EncUniversalValue UniversalValueNull
+
 integer :: AsnEncoding Integer
 integer = EncUniversalValue (UniversalValueInteger id mempty)
 
@@ -235,7 +261,7 @@ word64 = EncUniversalValue (UniversalValueInteger fromIntegral (Subtypes [Subtyp
 
 -- TODO: add a size subtype to this
 octetStringWord32 :: AsnEncoding Word32
-octetStringWord32 = EncUniversalValue (UniversalValueOctetString (LB.toStrict . Builder.toLazyByteString . Builder.word32BE) mempty) 
+octetStringWord32 = EncUniversalValue (UniversalValueOctetString (LB.toStrict . Builder.toLazyByteString . Builder.word32BE) mempty)
 
 int32 :: AsnEncoding Int32
 int32 = EncUniversalValue (UniversalValueInteger fromIntegral (Subtypes [SubtypeValueRange (-2147483648) 2147483647]))
@@ -263,14 +289,18 @@ universalValueTag x = case x of
   UniversalValueOctetString _ _ -> 4
   UniversalValueBoolean _ _ -> 1
   UniversalValueInteger _ _ -> 2
+  UniversalValueNull -> 5
   UniversalValueObjectIdentifier _ _ -> 6
   UniversalValueTextualString typ _ _ _ -> tagNumStringType typ
 
+-- For DER, which is what is actually targetted by this file,
+-- I think that this is always Primitive.
 univsersalValueConstruction :: UniversalValue a -> Construction
 univsersalValueConstruction x = case x of
-  UniversalValueOctetString _ _ -> Constructed
+  UniversalValueOctetString _ _ -> Primitive
   UniversalValueBoolean _ _ -> Primitive
   UniversalValueInteger _ _ -> Primitive
+  UniversalValueNull -> Primitive
   UniversalValueTextualString _ _ _ _ -> Primitive
   UniversalValueObjectIdentifier _ _ -> Primitive
 
@@ -290,6 +320,10 @@ encodeBerInternal x a = case x of
   EncChoice (Choice _ f) -> case f a of
     ValueAndEncoding _ _ b enc2 -> encodeBerInternal enc2 b
   EncSequence fields -> TaggedByteString Constructed sequenceTag (foldMap (encodeField a) fields)
+  -- It's kind of weird that sequence and sequence-of share the same tag,
+  -- but hey, that's how the committee designed it.
+  EncSequenceOf listify e -> TaggedByteString Constructed sequenceTag
+    (foldMap (encodeTaggedByteString . encodeBerInternal e) (listify a))
 
 sequenceTag :: Tag
 sequenceTag = Tag TagClassUniversal 16
@@ -354,6 +388,7 @@ encodePrimitiveBer p x = case p of
     True -> LB.singleton 1
     False -> LB.singleton 0
   UniversalValueInteger f _ -> integerBE (f x)
+  UniversalValueNull -> LB.empty
 
 encodeText :: StringType -> Text -> ByteString
 encodeText x t = case x of
@@ -419,13 +454,13 @@ oidBE (ObjectIdentifier nums1)
 
 multiByteBase127Encoding :: Integer -> Builder
 multiByteBase127Encoding i0 =
-  let (!i1,!byteVal) = quotRem i0 127
+  let (!i1,!byteVal) = quotRem i0 128
    in go i1 <> Builder.word8 (fromIntegral byteVal)
   where
   go n1 = if n1 == 0
     then mempty
     else let (!n2,!byteVal) = quotRem n1 128
-          in go n2 <> Builder.word8 (1 .|. fromIntegral byteVal)
+          in go n2 <> Builder.word8 (128 .|. fromIntegral byteVal)
 
 integerLog2 :: Integer -> Int
 integerLog2 i = I# (integerLog2# i)

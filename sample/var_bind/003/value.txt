@@ -1,0 +1,5 @@
+thing VarBind ::=
+{
+  name {1 3 6 1 4 1 2680 1 2 7 3 2 0},
+  result unSpecified: NULL
+}
