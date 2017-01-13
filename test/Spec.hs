@@ -4,7 +4,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 import Prelude hiding (sequence)
-import Recode
+import Language.Asn.Types
+import qualified Language.Asn.Encoding as Encoding
+import qualified Language.Asn.Decoding as Decoding
 import Internal (myOptions)
 import Test.Framework
 import Test.Framework.Providers.HUnit
@@ -17,6 +19,7 @@ import Data.Char (isSpace)
 import Net.Snmp.Types
 import Data.ByteString (ByteString)
 import Numeric (readHex)
+import Control.Monad
 import qualified Data.Text as Text
 import qualified Data.List as List
 import qualified Data.Aeson as Aeson
@@ -25,6 +28,7 @@ import qualified Data.ByteString.Lazy.Char8 as LBC8
 import qualified Data.ByteString.Char8 as BC8
 import qualified Data.ByteString as BS
 import qualified Net.Snmp.Encoding as SnmpEncoding
+import qualified Net.Snmp.Decoding as SnmpDecoding
 import qualified Data.ByteString.Base16 as Base16
 
 main :: IO ()
@@ -35,10 +39,10 @@ main = do
   varBindFiles <- List.sort . filter isChildTestDir <$> getDirectoryContents "sample/var_bind"
   messageFiles <- List.sort . filter isChildTestDir <$> getDirectoryContents "sample/message"
   defaultMain
-    [ testGroup "Human" (map (testEncoding "human" encHuman) humanFiles)
-    , testGroup "Foo" (map (testEncoding "foo" encFoo) fooFiles)
-    , testGroup "Text List" (map (testEncoding "text_list" encTexts) textListFiles)
-    , testGroup "VarBind" (map (testEncoding "var_bind" SnmpEncoding.varBind) varBindFiles)
+    -- [ testGroup "Human" (testEncodingDecoding "human" encHuman decHuman =<< humanFiles)
+    [ testGroup "Foo" (testEncodingDecoding "foo" encFoo decFoo =<< fooFiles)
+    , testGroup "Text List" (testEncodingDecoding "text_list" encTexts decTexts =<< textListFiles)
+    , testGroup "VarBind" (testEncodingDecoding "var_bind" SnmpEncoding.varBind SnmpDecoding.varBind =<< varBindFiles)
     , testGroup "Message V2" (map (testEncoding "message" SnmpEncoding.messageV2) messageFiles)
     ]
 
@@ -49,14 +53,15 @@ data Human = Human
   { humanName :: Text
   , humanFirstWords :: Text
   , humanAge :: Maybe Age
-  }
+  } deriving (Eq,Show)
 
 data Age = AgeBiblical Integer | AgeModern Integer
+  deriving (Eq,Show)
 
 data Foo = Foo
   { fooSize :: Integer
   , fooIdentifier :: ObjectIdentifier
-  }
+  } deriving (Eq,Show)
 
 testEncoding :: Aeson.FromJSON a => String -> AsnEncoding a -> String -> Test
 testEncoding name enc dirNum = testCase dirNum $ do
@@ -66,29 +71,73 @@ testEncoding name enc dirNum = testCase dirNum $ do
   a <- case Aeson.eitherDecode valueLbs of
     Left err -> fail ("bad json file for model [" ++ name ++ "] test [" ++ dirNum ++ "], error was: " ++ err)
     Right a -> return a
-  let encodedLbs = encodeBer enc a
+  let encodedLbs = Encoding.der enc a
   hexByteString encodedLbs @?= LBC8.unpack (LBC8.filter (not . isSpace) resultLbs)
 
+testEncodingDecoding :: (Aeson.FromJSON a, Eq a, Show a) => String -> AsnEncoding a -> AsnDecoding a -> String -> [Test]
+testEncodingDecoding name enc dec dirNum =
+  let load = do
+        let path = "sample/" ++ name ++ "/" ++ dirNum ++ "/"
+        valueLbs <- fmap LB.fromStrict $ BS.readFile (path ++ "value.json")
+        resultLbs <- fmap LB.fromStrict $ BS.readFile (path ++ "value.der.base64")
+        a <- case Aeson.eitherDecode valueLbs of
+          Left err -> fail ("bad json file for model [" ++ name ++ "] test [" ++ dirNum ++ "], error was: " ++ err)
+          Right a -> return a
+        return (resultLbs,a)
+   in [ testCase (dirNum ++ " encoding") $ do
+          (resultLbs, a) <- load
+          let encodedLbs = Encoding.der enc a
+          hexByteString encodedLbs @?= LBC8.unpack (LBC8.filter (not . isSpace) resultLbs)
+      , testCase (dirNum ++ " decoding") $ do
+          (resultLbs, expectedA) <- load
+          let (bs, remaining) = Base16.decode (BC8.filter (not . isSpace) $ LB.toStrict resultLbs)
+          when (BS.length remaining > 0) $ fail "provided hexadecimal in DER file was invalid hex"
+          foundA <- case Decoding.ber dec bs of
+            Left err -> fail $ "decoding ASN.1 BER file failed with: " ++ show err
+            Right foundA -> return foundA
+          foundA @?= expectedA
+      ]
+
 encHuman :: AsnEncoding Human
-encHuman = sequence
-  [ required "name" humanName utf8String
-  , defaulted "first-words" humanFirstWords utf8String "Hello World"
-  , optional "age" humanAge encAge
+encHuman = Encoding.sequence
+  [ Encoding.required "name" humanName Encoding.utf8String
+  , Encoding.defaulted "first-words" humanFirstWords Encoding.utf8String "Hello World"
+  , Encoding.optional "age" humanAge encAge
+  ]
+
+decHuman :: AsnDecoding Human
+decHuman = Decoding.sequence $ Human
+  <$> Decoding.required "name" Decoding.utf8String
+  <*> Decoding.defaulted "first-words" Decoding.utf8String "Hello World"
+  <*> Decoding.optional "age" decAge
+
+decAge :: AsnDecoding Age
+decAge = Decoding.choice
+  [ fmap AgeBiblical $ Decoding.option "biblical" $ Decoding.tag ContextSpecific 0 Explicit $ Decoding.integerRanged 0 1000
+  , fmap AgeModern $ Decoding.option "modern" $ Decoding.tag ContextSpecific 1 Explicit $ Decoding.integerRanged 0 100
   ]
 
 encFoo :: AsnEncoding Foo
-encFoo = sequence
-  [ required "size" fooSize integer
-  , required "identifier" fooIdentifier objectIdentifier
+encFoo = Encoding.sequence
+  [ Encoding.required "size" fooSize Encoding.integer
+  , Encoding.required "identifier" fooIdentifier Encoding.objectIdentifier
   ]
 
+decFoo :: AsnDecoding Foo
+decFoo = Decoding.sequence $ Foo
+  <$> Decoding.required "size" Decoding.integer
+  <*> Decoding.required "identifier" Decoding.objectIdentifier
+
 encTexts :: AsnEncoding [Text]
-encTexts = sequenceOf utf8String
+encTexts = Encoding.sequenceOf Encoding.utf8String
+
+decTexts :: AsnDecoding [Text]
+decTexts = Decoding.sequenceOf Decoding.utf8String
 
 encAge :: AsnEncoding Age
-encAge = choice [AgeBiblical 0, AgeModern 0] $ \x -> case x of
-  AgeBiblical n -> option 0 "biblical" n $ tag 0 $ integerRanged 0 1000
-  AgeModern n -> option 1 "modern" n $ tag 1 $ integerRanged 0 100
+encAge = Encoding.choice [AgeBiblical 0, AgeModern 0] $ \x -> case x of
+  AgeBiblical n -> Encoding.option 0 "biblical" n $ Encoding.tag ContextSpecific 0 Explicit $ Encoding.integerRanged 0 1000
+  AgeModern n -> Encoding.option 1 "modern" n $ Encoding.tag ContextSpecific 1 Explicit $ Encoding.integerRanged 0 100
 
 hexByteString :: LB.ByteString -> String
 hexByteString = LB.foldr (\w xs -> printf "%02X" w ++ xs) []

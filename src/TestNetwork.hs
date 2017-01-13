@@ -4,14 +4,15 @@ module TestNetwork where
 
 import Network.Socket hiding (send, sendTo, recv, recvFrom)
 import Network.Socket.ByteString
+import Language.Asn.Types
 import Net.Snmp.Types
 import Net.Snmp.Encoding
 import Data.ByteString (ByteString)
-import Recode
 import Text.Printf (printf)
 import Network.BSD (getProtocolNumber)
 import Control.Concurrent
 import Control.Monad
+import qualified Language.Asn.Encoding as E
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Vector as Vector
@@ -22,7 +23,7 @@ printResponse msg = do
   let serveraddr = head addrinfos
   sock <- socket (addrFamily serveraddr) Stream defaultProtocol
   connect sock (addrAddress serveraddr)
-  sendAll sock (LB.toStrict (encodeBer messageV2 msg))
+  sendAll sock (LB.toStrict (E.der messageV2 msg))
   result <- recv sock 2048
   close sock
   putStrLn (hexByteString result)
@@ -34,7 +35,7 @@ sendUdp msg = do
   sock <- socket (addrFamily serveraddr) Datagram defaultProtocol
   connect sock (addrAddress serveraddr)
   putStrLn "Sending"
-  sendAll sock (LB.toStrict $ encodeBer messageV2 msg)
+  sendAll sock (LB.toStrict $ E.der messageV2 msg)
   msg <- recv sock 1024
   close sock
   putStr "Got response: "

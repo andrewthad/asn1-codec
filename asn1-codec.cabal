@@ -16,10 +16,14 @@ library
   hs-source-dirs: src
   exposed-modules:
     Encode
-    Recode
     TestNetwork
+    Language.Asn.Encoding
+    Language.Asn.Decoding
+    Language.Asn.Types
+    Language.Asn.Types.Internal
     Net.Snmp.Types
     Net.Snmp.Encoding
+    Net.Snmp.Decoding
   build-depends:
       base >= 4.7 && < 5
     , integer-gmp

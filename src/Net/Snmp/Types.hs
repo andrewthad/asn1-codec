@@ -2,24 +2,29 @@
 
 module Net.Snmp.Types where
 
-import Recode
+import Language.Asn.Types
 import Data.Int
 import Data.Word
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
 
 newtype RequestId = RequestId { getRequestId :: Int32 }
+  deriving (Eq,Show)
 newtype ErrorIndex = ErrorIndex { getErrorIndex :: Int32 }
+  deriving (Eq,Show)
 newtype ErrorStatus = ErrorStatus { getErrorStatus :: Integer }
+  deriving (Eq,Show)
 
 data ObjectSyntax
   = ObjectSyntaxSimple SimpleSyntax
   | ObjectSyntaxApplication ApplicationSyntax
+  deriving (Eq,Show)
 
 data SimpleSyntax
   = SimpleSyntaxInteger Int32
   | SimpleSyntaxString ByteString
   | SimpleSyntaxObjectId ObjectIdentifier
+  deriving (Eq,Show)
 
 data ApplicationSyntax
   = ApplicationSyntaxIpAddress Word32
@@ -28,11 +33,12 @@ data ApplicationSyntax
   | ApplicationSyntaxArbitrary ByteString
   | ApplicationSyntaxBigCounter Word64
   | ApplicationSyntaxUnsignedInteger Word32
+  deriving (Eq,Show)
 
 data VarBind = VarBind
   { varBindName :: !ObjectIdentifier
   , varBindResult :: !BindingResult
-  }
+  } deriving (Eq,Show)
 
 data BindingResult
   = BindingResultValue ObjectSyntax
@@ -40,6 +46,7 @@ data BindingResult
   | BindingResultNoSuchObject
   | BindingResultNoSuchInstance
   | BindingResultEndOfMibView
+  deriving (Eq,Show)
 
 data Pdus
   = PdusGetRequest Pdu
@@ -50,6 +57,7 @@ data Pdus
   | PdusInformRequest Pdu
   | PdusSnmpTrap Pdu
   | PdusReport Pdu
+  deriving (Eq,Show)
 
 -- | A message as defined by RFC1157. The @version@ field is omitted
 --   since it is required to be 1. The encoding and decoding of 'Message'
@@ -59,7 +67,7 @@ data MessageV2 = MessageV2
   , messageV2Data :: !Pdus
     -- ^ In the ASN.1 definition of @Message@, this field is an @ANY@.
     --   In practice, it is always @PDUs@.
-  }
+  } deriving (Eq,Show)
 
 -- data MessageV3 = MessageV3
 --   { messageV3Version :: !Int
@@ -80,14 +88,14 @@ data Pdu = Pdu
   , pduErrorStatus :: !ErrorStatus
   , pduErrorIndex :: !ErrorIndex
   , pduVariableBindings :: !(Vector VarBind)
-  }
+  } deriving (Eq,Show)
 
 data BulkPdu = BulkPdu
   { bulkPduRequestId :: !RequestId
   , bulkPduNonRepeaters :: !Int32
   , bulkPduMaxRepetitions :: !Int32
   , bulkPduVariableBindings :: !(Vector VarBind)
-  }
+  } deriving (Eq,Show)
 
 
 

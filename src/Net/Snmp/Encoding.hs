@@ -3,7 +3,8 @@
 module Net.Snmp.Encoding where
 
 import Prelude hiding (sequence,null)
-import Recode
+import Language.Asn.Encoding
+import Language.Asn.Types
 import Net.Snmp.Types
 import Data.Coerce (coerce)
 import qualified Data.ByteString as ByteString
@@ -36,17 +37,17 @@ applicationSyntax = choice
   , ApplicationSyntaxUnsignedInteger 0
   ] $ \x -> case x of
   ApplicationSyntaxIpAddress n -> option 0 "ipAddress-value" n
-    $ implicitTag (Tag TagClassApplication 0) octetStringWord32
+    $ tag Application 0 Implicit octetStringWord32
   ApplicationSyntaxCounter n -> option 1 "counter-value" n
-    $ implicitTag (Tag TagClassApplication 1) word32
+    $ tag Application 1 Implicit word32
   ApplicationSyntaxTimeTicks n -> option 2 "timeticks-value" n
-    $ implicitTag (Tag TagClassApplication 3) word32
+    $ tag Application 3 Implicit word32
   ApplicationSyntaxArbitrary n -> option 3 "arbitrary-value" n
-    $ implicitTag (Tag TagClassApplication 4) octetString
+    $ tag Application 4 Implicit octetString
   ApplicationSyntaxBigCounter n -> option 4 "big-counter-value" n
-    $ implicitTag (Tag TagClassApplication 6) word64
+    $ tag Application 6 Implicit word64
   ApplicationSyntaxUnsignedInteger n -> option 5 "unsigned-integer-value" n
-    $ implicitTag (Tag TagClassApplication 2) word32
+    $ tag Application 2 Implicit word32
 
 objectSyntax :: AsnEncoding ObjectSyntax
 objectSyntax = choice
