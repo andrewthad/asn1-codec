@@ -172,7 +172,7 @@ decodeBerInternal x overrideTag bs1 = case x of
       let mmatched = listToMaybe $ List.filter
             (\((Tag tc tn,cstn),_) -> b .&. 192 == tagClassBit tc && b .&. 32 == constructionBit cstn && tn == theTagNumber)
             possibilities
-      case trace (show $ fmap fst mmatched) mmatched of
+      case mmatched of
         Nothing -> Left "while trying to decode Choice tag, the tag did not match any of the expected tags"
         Just (_,Wrapper chosenDecoder conv2) -> do
           (c,bs3) <- decodeBerInternal chosenDecoder Nothing bs1
@@ -200,7 +200,6 @@ nextExpectedTags x = case x of
   AsnDecodingRetag (TagAndExplicitness newTag expl) nextDecoding -> case expl of
     Explicit -> [((newTag,Constructed),idWrapper x)]
     Implicit -> map (\((_,c),Wrapper theDec theConv) -> ((newTag,c), Wrapper (AsnDecodingRetag (TagAndExplicitness newTag expl) theDec) theConv)) (nextExpectedTags nextDecoding)
-    -- Implicit -> map (\((_,c),w) -> ((newTag,c),w)) (nextExpectedTags nextDecoding)
   AsnDecodingConversion nextDecoding conv ->
     map (\((t,c),Wrapper theDec theConv) -> ((t,c),Wrapper theDec (theConv >=> conv))) (nextExpectedTags nextDecoding)
 

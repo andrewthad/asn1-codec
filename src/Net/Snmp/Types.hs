@@ -8,31 +8,31 @@ import Data.Word
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
 
-newtype RequestId = RequestId { getRequestId :: Int32 }
-  deriving (Eq,Show)
+newtype RequestId = RequestId { getRequestId :: Int }
+  deriving (Eq,Ord,Show,Read)
 newtype ErrorIndex = ErrorIndex { getErrorIndex :: Int32 }
   deriving (Eq,Show)
 newtype ErrorStatus = ErrorStatus { getErrorStatus :: Integer }
   deriving (Eq,Show)
 
 data ObjectSyntax
-  = ObjectSyntaxSimple SimpleSyntax
-  | ObjectSyntaxApplication ApplicationSyntax
+  = ObjectSyntaxSimple !SimpleSyntax
+  | ObjectSyntaxApplication !ApplicationSyntax
   deriving (Eq,Show)
 
 data SimpleSyntax
-  = SimpleSyntaxInteger Int32
-  | SimpleSyntaxString ByteString
-  | SimpleSyntaxObjectId ObjectIdentifier
+  = SimpleSyntaxInteger !Int32
+  | SimpleSyntaxString !ByteString
+  | SimpleSyntaxObjectId !ObjectIdentifier
   deriving (Eq,Show)
 
 data ApplicationSyntax
-  = ApplicationSyntaxIpAddress Word32
-  | ApplicationSyntaxCounter Word32
-  | ApplicationSyntaxTimeTicks Word32
-  | ApplicationSyntaxArbitrary ByteString
-  | ApplicationSyntaxBigCounter Word64
-  | ApplicationSyntaxUnsignedInteger Word32
+  = ApplicationSyntaxIpAddress !Word32
+  | ApplicationSyntaxCounter !Word32
+  | ApplicationSyntaxTimeTicks !Word32
+  | ApplicationSyntaxArbitrary !ByteString
+  | ApplicationSyntaxBigCounter !Word64
+  | ApplicationSyntaxUnsignedInteger !Word32
   deriving (Eq,Show)
 
 data VarBind = VarBind
@@ -41,7 +41,7 @@ data VarBind = VarBind
   } deriving (Eq,Show)
 
 data BindingResult
-  = BindingResultValue ObjectSyntax
+  = BindingResultValue !ObjectSyntax
   | BindingResultUnspecified
   | BindingResultNoSuchObject
   | BindingResultNoSuchInstance
@@ -49,14 +49,14 @@ data BindingResult
   deriving (Eq,Show)
 
 data Pdus
-  = PdusGetRequest Pdu
-  | PdusGetNextRequest Pdu
-  | PdusGetBulkRequest BulkPdu
-  | PdusResponse Pdu
-  | PdusSetRequest Pdu
-  | PdusInformRequest Pdu
-  | PdusSnmpTrap Pdu
-  | PdusReport Pdu
+  = PdusGetRequest !Pdu
+  | PdusGetNextRequest !Pdu
+  | PdusGetBulkRequest !BulkPdu
+  | PdusResponse !Pdu
+  | PdusSetRequest !Pdu
+  | PdusInformRequest !Pdu
+  | PdusSnmpTrap !Pdu
+  | PdusReport !Pdu
   deriving (Eq,Show)
 
 -- | A message as defined by RFC1157. The @version@ field is omitted

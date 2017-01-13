@@ -39,11 +39,11 @@ main = do
   varBindFiles <- List.sort . filter isChildTestDir <$> getDirectoryContents "sample/var_bind"
   messageFiles <- List.sort . filter isChildTestDir <$> getDirectoryContents "sample/message"
   defaultMain
-    -- [ testGroup "Human" (testEncodingDecoding "human" encHuman decHuman =<< humanFiles)
-    [ testGroup "Foo" (testEncodingDecoding "foo" encFoo decFoo =<< fooFiles)
+    [ testGroup "Human" (testEncodingDecoding "human" encHuman decHuman =<< humanFiles)
+    , testGroup "Foo" (testEncodingDecoding "foo" encFoo decFoo =<< fooFiles)
     , testGroup "Text List" (testEncodingDecoding "text_list" encTexts decTexts =<< textListFiles)
     , testGroup "VarBind" (testEncodingDecoding "var_bind" SnmpEncoding.varBind SnmpDecoding.varBind =<< varBindFiles)
-    , testGroup "Message V2" (map (testEncoding "message" SnmpEncoding.messageV2) messageFiles)
+    , testGroup "Message V2" (testEncodingDecoding "message" SnmpEncoding.messageV2 SnmpDecoding.messageV2 =<< messageFiles)
     ]
 
 isChildTestDir :: String -> Bool

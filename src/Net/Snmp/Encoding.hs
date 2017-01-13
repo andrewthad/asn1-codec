@@ -80,7 +80,7 @@ varBind = sequence
 
 pdu :: AsnEncoding Pdu
 pdu = sequence
-  [ required "request-id" pduRequestId (coerce int32)
+  [ required "request-id" pduRequestId (coerce int)
   , required "error-status" pduErrorStatus (coerce integer)
   , required "error-index" pduErrorIndex (coerce int32)
   , required "variable-bindings" pduVariableBindings (sequenceOf varBind)

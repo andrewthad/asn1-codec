@@ -15,7 +15,6 @@ cabal-version:       >=1.10
 library
   hs-source-dirs: src
   exposed-modules:
-    Encode
     TestNetwork
     Language.Asn.Encoding
     Language.Asn.Decoding
@@ -24,6 +23,7 @@ library
     Net.Snmp.Types
     Net.Snmp.Encoding
     Net.Snmp.Decoding
+    Net.Snmp.Client
   build-depends:
       base >= 4.7 && < 5
     , integer-gmp

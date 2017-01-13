@@ -62,7 +62,7 @@ varBind = sequence $ VarBind
 
 pdu :: AsnDecoding Pdu
 pdu = sequence $ Pdu
-  <$> required "request-id" (coerce int32)
+  <$> required "request-id" (coerce int)
   <*> required "error-status" (coerce integer)
   <*> required "error-index" (coerce int32)
   <*> required "variable-bindings" (fmap Vector.fromList $ sequenceOf varBind)
