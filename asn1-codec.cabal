@@ -33,6 +33,8 @@ library
     , pretty
     , text
     , network
+    , stm
+    , containers
   default-language:    Haskell2010
 
 test-suite asn1-records-test

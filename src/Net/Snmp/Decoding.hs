@@ -69,7 +69,7 @@ pdu = sequence $ Pdu
 
 bulkPdu :: AsnDecoding BulkPdu
 bulkPdu = sequence $ BulkPdu
-  <$> required "request-id" (coerce int32)
+  <$> required "request-id" (coerce int)
   <*> required "non-repeaters" int32
   <*> required "max-repetitions" int32
   <*> required "variable-bindings" (fmap Vector.fromList $ sequenceOf varBind)

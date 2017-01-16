@@ -88,7 +88,7 @@ pdu = sequence
 
 bulkPdu :: AsnEncoding BulkPdu
 bulkPdu = sequence
-  [ required "request-id" bulkPduRequestId (coerce int32)
+  [ required "request-id" bulkPduRequestId (coerce int)
   , required "non-repeaters" bulkPduNonRepeaters int32
   , required "max-repetitions" bulkPduMaxRepetitions int32
   , required "variable-bindings" bulkPduVariableBindings (sequenceOf varBind)

@@ -18,6 +18,7 @@ module Language.Asn.Decoding
   , integer
   , integerRanged
   , int32
+  , int
   , word32
   , word64
   , null
@@ -95,6 +96,11 @@ octetStringWord32 = mapFailable
 
 integer :: AsnDecoding Integer
 integer = AsnDecodingUniversal (UniverseDecodingInteger id (Subtypes []))
+
+-- This could be improved by making sure that integer in question is actually
+-- in the provided bounds.
+int :: AsnDecoding Int
+int = AsnDecodingUniversal (UniverseDecodingInteger fromIntegral (Subtypes []))
 
 -- This could be improved by making sure that integer in question is actually
 -- in the provided bounds.
