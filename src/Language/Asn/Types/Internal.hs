@@ -51,14 +51,14 @@ data UniversalValue a
 newtype Subtypes a = Subtypes { getSubtypes :: [Subtype a] }
   deriving (Monoid)
 
-newtype ObjectIdentifier = ObjectIdentifier (Vector Integer)
+newtype ObjectIdentifier = ObjectIdentifier { getObjectIdentifier :: Vector Integer }
   deriving (Eq,Ord,Show,Read)
 
 instance Hashable ObjectIdentifier where
   hash (ObjectIdentifier v) = hash (Vector.toList v)
   hashWithSalt s (ObjectIdentifier v) = hashWithSalt s (Vector.toList v)
 
-newtype ObjectIdentifierSuffix = ObjectIdentifierSuffix (Vector Integer)
+newtype ObjectIdentifierSuffix = ObjectIdentifierSuffix { getObjectIdentifierSuffix :: Vector Integer }
   deriving (Eq,Ord,Show,Read)
 
 instance Hashable ObjectIdentifierSuffix where
