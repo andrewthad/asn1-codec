@@ -14,9 +14,12 @@ import Data.Vector (Vector)
 import Data.IntMap (IntMap)
 import Control.Monad
 import Control.Concurrent (forkIO)
+import Control.Concurrent.Chan 
 import Data.ByteString (ByteString)
 import Control.Exception (throwIO,Exception)
 import Control.Applicative
+import Data.Functor
+import Control.Concurrent
 import qualified Data.Vector as Vector
 import qualified Data.IntMap as IntMap
 import qualified Network.Socket as NS
@@ -28,10 +31,12 @@ import qualified Language.Asn.Decoding as AsnDecoding
 import qualified Language.Asn.Encoding as AsnEncoding
 import qualified Data.Map as Map
 import qualified Data.ByteString.Lazy as LB
+import qualified System.Posix.Types
 
 data Session = Session
   { sessionBufferedResponsesV2 :: TVar (IntMap (TMVar Pdu))
   , sessionSockets :: !(Chan NS.Socket)
+  , sessionSocketCount :: !Int
   , sessionRequestId :: TVar RequestId
   , sessionTimeoutMicroseconds :: !Int
   , sessionMaxTries :: !Int
@@ -39,7 +44,6 @@ data Session = Session
 
 data Config = Config
   { configSocketPoolSize :: !Int
-  , configErrorHandler :: String -> IO ()
   , configTimeoutMicroseconds :: !Int
   , configRetries :: !Int
   }
@@ -59,10 +63,10 @@ data CredentialsV3 = CredentialsV3
 
 -- | Only one connection can be open at a time on a given port.
 openSession :: Config -> IO Session
-openSession (Config socketPoolSize errHandler timeout retries) = do
+openSession (Config socketPoolSize timeout retries) = do
   addrinfos <- NS.getAddrInfo (Just (NS.defaultHints {NS.addrFlags = [NS.AI_PASSIVE]})) (Just "127.0.0.1") Nothing
   let serveraddr = head addrinfos
-  allSockets <- replicateM $ do
+  allSockets <- replicateM socketPoolSize $ do
     sock <- NS.socket (NS.addrFamily serveraddr) NS.Datagram NS.defaultProtocol
     NS.bind sock (NS.addrAddress serveraddr)
     return sock
@@ -70,33 +74,12 @@ openSession (Config socketPoolSize errHandler timeout retries) = do
   requestIdVar <- newTVarIO (RequestId 1)
   socketChan <- newChan
   writeList2Chan socketChan allSockets
-  let go = do
-        bs <- NSB.recv sock 10000
-        errHandler "Received a byte string"
-        if ByteString.null bs
-          then return ()
-          else do
-            case AsnDecoding.ber SnmpDecoding.messageV2 bs of
-              Left err -> errHandler err
-              Right msg -> case messageV2Data msg of
-                PdusResponse pdu@(Pdu requestId _ _ _) -> do
-                  hasError <- atomically $ do
-                    bufferedResponses <- readTVar bufferedResponsesVar
-                    case IntMap.lookup (getRequestId requestId) bufferedResponses of
-                      Nothing -> return True
-                      Just pduVar -> do
-                        putTMVar pduVar pdu -- this should not ever block
-                        let newBufferedResponses = IntMap.delete (getRequestId requestId) bufferedResponses
-                        writeTVar bufferedResponsesVar bufferedResponses
-                        return False
-                  when hasError $ errHandler "the haskell snmp client has an implementation mistake. If you see this, please open an issue."
-                _ -> errHandler $ "received a PDU that was not a response, full message: " ++ show msg
-            go
-  forkIO go
-  return (Session bufferedResponsesVar sock requestIdVar timeout retries)
+  return (Session bufferedResponsesVar socketChan socketPoolSize requestIdVar timeout retries)
 
 closeSession :: Session -> IO ()
-closeSession session = NS.close (sessionSocket session)
+closeSession session = replicateM_ (sessionSocketCount session) $ do
+  sock <- readChan (sessionSockets session)
+  NS.close sock
 
 generalRequest ::
      (Pdu -> Pdus) -> (Pdu -> Either SnmpException a)
@@ -107,6 +90,7 @@ generalRequest wrapPdu fromPdu session (Destination ip port) creds varBinds = do
   atomically $ modifyTVar'
     (sessionBufferedResponsesV2 session)
     (IntMap.insert (getRequestId requestId) receivedPduVar)
+  sock <- readChan (sessionSockets session)
   let !bs = case creds of
         CredentialsConstructV2 (CredentialsV2 commStr) -> id
           $ LB.toStrict
@@ -116,42 +100,40 @@ generalRequest wrapPdu fromPdu session (Destination ip port) creds varBinds = do
           $ Pdu requestId (ErrorStatus 0) (ErrorIndex 0) varBinds
         CredentialsConstructV3 CredentialsV3 -> error "generalRequest: handle v3"
       !bsLen = ByteString.length bs
-      go !n1 = if n1 > 0
+      go1 :: Int -> IO (Either SnmpException Pdu)
+      go1 !n1 = if n1 > 0
         then do
-          putStrLn "about to send bytes"
-          bytesSent <- NSB.sendTo (sessionSocket session) bs (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
-          putStrLn "sent some bytes"
-          when (bytesSent /= bsLen)
-            $ throwIO $ SnmpExceptionNotAllBytesSent bytesSent bsLen
-          m <- readTMVarTimeout (sessionTimeoutMicroseconds session) receivedPduVar
-          case m of
-            Nothing -> go (n1 - 1)
-            Just pdu -> case fromPdu pdu of
-              Left err -> throwIO err
-              Right a -> return a
+          bytesSent <- NSB.sendTo sock bs (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
+          if bytesSent /= bsLen
+            then return $ Left $ SnmpExceptionNotAllBytesSent bytesSent bsLen
+            else do
+              let go2 = do
+                    (isReadyAction,deregister) <- threadWaitReadSTM (mySockFd sock)
+                    delay <- registerDelay (sessionTimeoutMicroseconds session)
+                    isContentReady <- atomically $ (isReadyAction $> True) <|> (fini delay $> False)
+                    deregister
+                    if not isContentReady
+                      then go1 (n1 - 1)
+                      else do
+                        bs <- NSB.recv sock 10000
+                        if ByteString.null bs
+                          then return (Left SnmpExceptionSocketClosed)
+                          else case AsnDecoding.ber SnmpDecoding.messageV2 bs of
+                            Left err -> return (Left $ SnmpExceptionDecoding err)
+                            Right msg -> case messageV2Data msg of
+                              PdusResponse pdu@(Pdu respRequestId _ _ _) ->
+                                case compare requestId respRequestId of
+                                  LT -> go2
+                                  EQ -> return (Right pdu) 
+                                  GT -> throwIO $ SnmpExceptionMissedResponse requestId respRequestId
+                              _ -> return (Left (SnmpExceptionNonPduResponseV2 msg))
+              go2
         else throwIO SnmpExceptionTimeout
-        bs <- NSB.recv sock 10000
-        errHandler "Received a byte string"
-        if ByteString.null bs
-          then return ()
-          else do
-            case AsnDecoding.ber SnmpDecoding.messageV2 bs of
-              Left err -> errHandler err
-              Right msg -> case messageV2Data msg of
-                PdusResponse pdu@(Pdu requestId _ _ _) -> do
-                  hasError <- atomically $ do
-                    bufferedResponses <- readTVar bufferedResponsesVar
-                    case IntMap.lookup (getRequestId requestId) bufferedResponses of
-                      Nothing -> return True
-                      Just pduVar -> do
-                        putTMVar pduVar pdu -- this should not ever block
-                        let newBufferedResponses = IntMap.delete (getRequestId requestId) bufferedResponses
-                        writeTVar bufferedResponsesVar bufferedResponses
-                        return False
-                  when hasError $ errHandler "the haskell snmp client has an implementation mistake. If you see this, please open an issue."
-                _ -> errHandler $ "received a PDU that was not a response, full message: " ++ show msg
-            go
-  go (sessionMaxTries session)
+  e <- go1 (sessionMaxTries session)
+  writeChan (sessionSockets session) sock
+  case e >>= fromPdu of
+    Left err -> throwIO err
+    Right a -> return a
 
 get :: Session -> Destination -> Credentials -> ObjectIdentifier -> IO ObjectSyntax
 get s d c ident = generalRequest
@@ -187,6 +169,10 @@ data SnmpException
   | SnmpExceptionNoSuchObject
   | SnmpExceptionNoSuchInstance
   | SnmpExceptionEndOfMibView
+  | SnmpExceptionMissedResponse !RequestId !RequestId
+  | SnmpExceptionNonPduResponseV2 !MessageV2
+  | SnmpExceptionDecoding !String
+  | SnmpExceptionSocketClosed 
   deriving (Show,Eq)
 
 instance Exception SnmpException
@@ -208,4 +194,6 @@ nextRequestId requestIdVar = atomically $ do
   writeTVar requestIdVar (RequestId i2)
   return (RequestId i2)
 
+mySockFd :: NS.Socket -> System.Posix.Types.Fd 
+mySockFd (NS.MkSocket n _ _ _ _) = System.Posix.Types.Fd n
 
