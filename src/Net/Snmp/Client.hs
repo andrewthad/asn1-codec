@@ -109,7 +109,6 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
       go1 :: Int -> IO (Either SnmpException Pdu)
       go1 !n1 = if n1 > 0
         then do
-          putStrLn $ "About to send: " ++ show bs
           bytesSent <- NSB.sendTo sock bs (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
           if bytesSent /= bsLen
             then return $ Left $ SnmpExceptionNotAllBytesSent bytesSent bsLen
