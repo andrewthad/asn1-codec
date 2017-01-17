@@ -9,6 +9,7 @@ import Control.Monad.STM
 import Control.Concurrent.STM.TVar
 import Control.Concurrent.STM.TMVar
 import Data.Map (Map)
+import Data.Maybe
 import Data.Word
 import Data.Vector (Vector)
 import Data.IntMap (IntMap)
@@ -34,10 +35,9 @@ import qualified Data.ByteString.Lazy as LB
 import qualified System.Posix.Types
 
 data Session = Session
-  { sessionBufferedResponsesV2 :: TVar (IntMap (TMVar Pdu))
-  , sessionSockets :: !(Chan NS.Socket)
+  { sessionSockets :: !(Chan NS.Socket)
   , sessionSocketCount :: !Int
-  , sessionRequestId :: TVar RequestId
+  , sessionRequestId :: !(TVar RequestId)
   , sessionTimeoutMicroseconds :: !Int
   , sessionMaxTries :: !Int
   }
@@ -61,6 +61,12 @@ newtype CredentialsV2 = CredentialsV2 { credentialsV2CommunityString :: ByteStri
 
 data CredentialsV3 = CredentialsV3
 
+data Context = Context
+  { contextSession :: !Session
+  , contextDestination :: !Destination
+  , contextCredentials :: !Credentials
+  }
+
 -- | Only one connection can be open at a time on a given port.
 openSession :: Config -> IO Session
 openSession (Config socketPoolSize timeout retries) = do
@@ -70,34 +76,31 @@ openSession (Config socketPoolSize timeout retries) = do
     sock <- NS.socket (NS.addrFamily serveraddr) NS.Datagram NS.defaultProtocol
     NS.bind sock (NS.addrAddress serveraddr)
     return sock
-  bufferedResponsesVar <- newTVarIO (IntMap.empty :: IntMap (TMVar Pdu))
   requestIdVar <- newTVarIO (RequestId 1)
   socketChan <- newChan
   writeList2Chan socketChan allSockets
-  return (Session bufferedResponsesVar socketChan socketPoolSize requestIdVar timeout retries)
+  return (Session socketChan socketPoolSize requestIdVar timeout retries)
 
 closeSession :: Session -> IO ()
 closeSession session = replicateM_ (sessionSocketCount session) $ do
   sock <- readChan (sessionSockets session)
   NS.close sock
 
-generalRequest ::
-     (Pdu -> Pdus) -> (Pdu -> Either SnmpException a)
-  -> Session -> Destination -> Credentials -> Vector VarBind -> IO a
-generalRequest wrapPdu fromPdu session (Destination ip port) creds varBinds = do
+generalRequest :: 
+     (RequestId -> Pdus) 
+  -> (Pdu -> Either SnmpException a) 
+  -> Context 
+  -> IO a
+generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) creds) = do
   requestId <- nextRequestId (sessionRequestId session)
   receivedPduVar <- newEmptyTMVarIO
-  atomically $ modifyTVar'
-    (sessionBufferedResponsesV2 session)
-    (IntMap.insert (getRequestId requestId) receivedPduVar)
   sock <- readChan (sessionSockets session)
   let !bs = case creds of
         CredentialsConstructV2 (CredentialsV2 commStr) -> id
           $ LB.toStrict
           $ AsnEncoding.der SnmpEncoding.messageV2
           $ MessageV2 commStr
-          $ wrapPdu
-          $ Pdu requestId (ErrorStatus 0) (ErrorIndex 0) varBinds
+          $ pdusFromRequestId requestId
         CredentialsConstructV3 CredentialsV3 -> error "generalRequest: handle v3"
       !bsLen = ByteString.length bs
       go1 :: Int -> IO (Either SnmpException Pdu)
@@ -125,22 +128,50 @@ generalRequest wrapPdu fromPdu session (Destination ip port) creds varBinds = do
                                 case compare requestId respRequestId of
                                   LT -> go2
                                   EQ -> return (Right pdu) 
-                                  GT -> throwIO $ SnmpExceptionMissedResponse requestId respRequestId
+                                  GT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
                               _ -> return (Left (SnmpExceptionNonPduResponseV2 msg))
               go2
-        else throwIO SnmpExceptionTimeout
+        else return $ Left SnmpExceptionTimeout
   e <- go1 (sessionMaxTries session)
   writeChan (sessionSockets session) sock
   case e >>= fromPdu of
     Left err -> throwIO err
     Right a -> return a
 
-get :: Session -> Destination -> Credentials -> ObjectIdentifier -> IO ObjectSyntax
-get s d c ident = generalRequest
-  PdusGetRequest
+get :: Context -> ObjectIdentifier -> IO ObjectSyntax
+get ctx ident = generalRequest
+  (\reqId -> PdusGetRequest (Pdu reqId (ErrorStatus 0) (ErrorIndex 0) (Vector.singleton (VarBind ident BindingResultUnspecified))))
   (singleBindingValue ident <=< onlyBindings)
-  s d c
-  (Vector.singleton (VarBind ident BindingResultUnspecified))
+  ctx
+
+getBulkStep :: Context -> Int -> ObjectIdentifier -> IO (Vector (ObjectIdentifier,ObjectSyntax))
+getBulkStep ctx maxRep ident = generalRequest
+  (\reqId -> PdusGetBulkRequest (BulkPdu reqId 0 (fromIntegral maxRep) (Vector.singleton (VarBind ident BindingResultUnspecified))))
+  (fmap multipleBindings . onlyBindings)
+  ctx
+
+getBulkChildren :: Context -> Int -> ObjectIdentifier -> IO (Vector (ObjectIdentifier,ObjectSyntax))
+getBulkChildren ctx maxRep oid1 = go Vector.empty oid1 where
+  go prevPairs ident = do
+    pairsUnfiltered <- getBulkStep ctx maxRep ident
+    let pairs = Vector.filter (\(oid,_) -> oidIsPrefixOf oid1 oid) pairsUnfiltered
+    if Vector.null pairs
+      then return prevPairs
+      else go (prevPairs Vector.++ pairs) (fst (Vector.last pairs))
+
+oidIsPrefixOf :: ObjectIdentifier -> ObjectIdentifier -> Bool
+oidIsPrefixOf (ObjectIdentifier a) (ObjectIdentifier b) =
+  let lenA = Vector.length a in
+  (lenA <= Vector.length b) &&
+  (Vector.take lenA a == Vector.take lenA b)
+
+-- There is not a mapMaybe for vector until 0.12.0.0
+multipleBindings :: Vector VarBind -> Vector (ObjectIdentifier,ObjectSyntax)
+multipleBindings = Vector.fromList . mapMaybe 
+  ( \(VarBind ident br) -> case br of
+       BindingResultValue obj -> Just (ident,obj)
+       _ -> Nothing
+  ) . Vector.toList
 
 singleBindingValue :: ObjectIdentifier -> Vector VarBind -> Either SnmpException ObjectSyntax
 singleBindingValue oid v = if Vector.length v == 1
