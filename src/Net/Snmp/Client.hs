@@ -15,7 +15,7 @@ import Data.Vector (Vector)
 import Data.IntMap (IntMap)
 import Control.Monad
 import Control.Concurrent (forkIO)
-import Control.Concurrent.Chan 
+import Control.Concurrent.Chan
 import Data.ByteString (ByteString)
 import Control.Exception (throwIO,Exception)
 import Control.Applicative
@@ -86,10 +86,10 @@ closeSession session = replicateM_ (sessionSocketCount session) $ do
   sock <- readChan (sessionSockets session)
   NS.close sock
 
-generalRequest :: 
-     (RequestId -> Pdus) 
-  -> (Pdu -> Either SnmpException a) 
-  -> Context 
+generalRequest ::
+     (RequestId -> Pdus)
+  -> (Pdu -> Either SnmpException a)
+  -> Context
   -> IO a
 generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) creds) = do
   requestId <- nextRequestId (sessionRequestId session)
@@ -127,7 +127,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                               PdusResponse pdu@(Pdu respRequestId _ _ _) ->
                                 case compare requestId respRequestId of
                                   LT -> go2
-                                  EQ -> return (Right pdu) 
+                                  EQ -> return (Right pdu)
                                   GT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
                               _ -> return (Left (SnmpExceptionNonPduResponseV2 msg))
               go2
@@ -163,11 +163,11 @@ oidIsPrefixOf :: ObjectIdentifier -> ObjectIdentifier -> Bool
 oidIsPrefixOf (ObjectIdentifier a) (ObjectIdentifier b) =
   let lenA = Vector.length a in
   (lenA <= Vector.length b) &&
-  (Vector.take lenA a == Vector.take lenA b)
+  (a == Vector.take lenA b)
 
 -- There is not a mapMaybe for vector until 0.12.0.0
 multipleBindings :: Vector VarBind -> Vector (ObjectIdentifier,ObjectSyntax)
-multipleBindings = Vector.fromList . mapMaybe 
+multipleBindings = Vector.fromList . mapMaybe
   ( \(VarBind ident br) -> case br of
        BindingResultValue obj -> Just (ident,obj)
        _ -> Nothing
@@ -203,7 +203,7 @@ data SnmpException
   | SnmpExceptionMissedResponse !RequestId !RequestId
   | SnmpExceptionNonPduResponseV2 !MessageV2
   | SnmpExceptionDecoding !String
-  | SnmpExceptionSocketClosed 
+  | SnmpExceptionSocketClosed
   deriving (Show,Eq)
 
 instance Exception SnmpException
@@ -225,6 +225,6 @@ nextRequestId requestIdVar = atomically $ do
   writeTVar requestIdVar (RequestId i2)
   return (RequestId i2)
 
-mySockFd :: NS.Socket -> System.Posix.Types.Fd 
+mySockFd :: NS.Socket -> System.Posix.Types.Fd
 mySockFd (NS.MkSocket n _ _ _ _) = System.Posix.Types.Fd n
 

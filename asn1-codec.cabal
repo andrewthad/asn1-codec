@@ -35,6 +35,7 @@ library
     , network
     , stm
     , containers
+    , hashable
   default-language:    Haskell2010
 
 test-suite asn1-records-test

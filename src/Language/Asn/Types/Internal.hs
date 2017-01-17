@@ -25,6 +25,7 @@ import Data.Vector (Vector)
 import GHC.Int (Int(..))
 import GHC.Integer.Logarithms (integerLog2#)
 import Data.Foldable
+import Data.Hashable (Hashable(..))
 import qualified Data.Text.Encoding as TE
 import qualified Text.PrettyPrint as PP
 import qualified Data.ByteString.Lazy as LB
@@ -52,6 +53,10 @@ newtype Subtypes a = Subtypes { getSubtypes :: [Subtype a] }
 
 newtype ObjectIdentifier = ObjectIdentifier (Vector Integer)
   deriving (Eq,Ord,Show,Read)
+
+instance Hashable ObjectIdentifier where
+  hash (ObjectIdentifier v) = hash (Vector.toList v)
+  hashWithSalt s (ObjectIdentifier v) = hashWithSalt s (Vector.toList v)
 
 data Subtype a
   = SubtypeSingleValue a -- This also acts as PermittedAlphabet
