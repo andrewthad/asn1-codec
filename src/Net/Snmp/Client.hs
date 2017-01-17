@@ -70,7 +70,10 @@ data Context = Context
 -- | Only one connection can be open at a time on a given port.
 openSession :: Config -> IO Session
 openSession (Config socketPoolSize timeout retries) = do
-  addrinfos <- NS.getAddrInfo (Just (NS.defaultHints {NS.addrFlags = [NS.AI_PASSIVE]})) (Just "127.0.0.1") Nothing
+  addrinfos <- NS.getAddrInfo
+    (Just (NS.defaultHints {NS.addrFlags = [NS.AI_PASSIVE]}))
+    (Just "0.0.0.0")
+    Nothing
   let serveraddr = head addrinfos
   allSockets <- replicateM socketPoolSize $ do
     sock <- NS.socket (NS.addrFamily serveraddr) NS.Datagram NS.defaultProtocol
@@ -106,6 +109,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
       go1 :: Int -> IO (Either SnmpException Pdu)
       go1 !n1 = if n1 > 0
         then do
+          putStrLn $ "About to send: " ++ show bs
           bytesSent <- NSB.sendTo sock bs (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
           if bytesSent /= bsLen
             then return $ Left $ SnmpExceptionNotAllBytesSent bytesSent bsLen
