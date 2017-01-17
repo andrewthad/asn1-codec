@@ -7,6 +7,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 {-# OPTIONS_GHC -Wall #-}
 
@@ -26,6 +27,7 @@ import GHC.Int (Int(..))
 import GHC.Integer.Logarithms (integerLog2#)
 import Data.Foldable
 import Data.Hashable (Hashable(..))
+import GHC.Generics (Generic)
 import qualified Data.Text.Encoding as TE
 import qualified Text.PrettyPrint as PP
 import qualified Data.ByteString.Lazy as LB
@@ -52,14 +54,14 @@ newtype Subtypes a = Subtypes { getSubtypes :: [Subtype a] }
   deriving (Monoid)
 
 newtype ObjectIdentifier = ObjectIdentifier { getObjectIdentifier :: Vector Integer }
-  deriving (Eq,Ord,Show,Read)
+  deriving (Eq,Ord,Show,Read,Generic)
 
 instance Hashable ObjectIdentifier where
   hash (ObjectIdentifier v) = hash (Vector.toList v)
   hashWithSalt s (ObjectIdentifier v) = hashWithSalt s (Vector.toList v)
 
 newtype ObjectIdentifierSuffix = ObjectIdentifierSuffix { getObjectIdentifierSuffix :: Vector Integer }
-  deriving (Eq,Ord,Show,Read)
+  deriving (Eq,Ord,Show,Read,Generic)
 
 instance Hashable ObjectIdentifierSuffix where
   hash (ObjectIdentifierSuffix v) = hash (Vector.toList v)
