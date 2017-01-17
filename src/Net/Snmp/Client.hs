@@ -129,9 +129,9 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                             Right msg -> case messageV2Data msg of
                               PdusResponse pdu@(Pdu respRequestId _ _ _) ->
                                 case compare requestId respRequestId of
-                                  LT -> go2
+                                  GT -> go2
                                   EQ -> return (Right pdu)
-                                  GT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
+                                  LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
                               _ -> return (Left (SnmpExceptionNonPduResponseV2 msg))
               go2
         else return $ Left SnmpExceptionTimeout
