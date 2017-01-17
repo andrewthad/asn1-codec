@@ -18,6 +18,7 @@ library
     TestNetwork
     Language.Asn.Encoding
     Language.Asn.Decoding
+    Language.Asn.ObjectIdentifier
     Language.Asn.Types
     Language.Asn.Types.Internal
     Net.Snmp.Types

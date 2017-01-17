@@ -58,6 +58,13 @@ instance Hashable ObjectIdentifier where
   hash (ObjectIdentifier v) = hash (Vector.toList v)
   hashWithSalt s (ObjectIdentifier v) = hashWithSalt s (Vector.toList v)
 
+newtype ObjectIdentifierSuffix = ObjectIdentifierSuffix (Vector Integer)
+  deriving (Eq,Ord,Show,Read)
+
+instance Hashable ObjectIdentifierSuffix where
+  hash (ObjectIdentifierSuffix v) = hash (Vector.toList v)
+  hashWithSalt s (ObjectIdentifierSuffix v) = hashWithSalt s (Vector.toList v)
+
 data Subtype a
   = SubtypeSingleValue a -- This also acts as PermittedAlphabet
   | SubtypeValueRange a a
