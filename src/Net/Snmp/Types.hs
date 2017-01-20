@@ -69,19 +69,26 @@ data MessageV2 = MessageV2
     --   In practice, it is always @PDUs@.
   } deriving (Eq,Show)
 
--- data MessageV3 = MessageV3
---   { messageV3Version :: !Int
---   , messageV3GlobalData :: !HeaderData
---   , messageV3SecurityParameters :: !ByteString
---   , messageV3Data :: !ScopedPduData
---   }
---
--- data HeaderData = HeaderData
---   { headerDataId :: !MessageId
---   , headerDataMaxSize :: !Int
---   , headerDataFlags :: !Word8
---   , headerDataSecurityModel :: !Int
---   }
+data MessageV3 = MessageV3
+  { messageV3GlobalData :: !HeaderData
+  , messageV3SecurityParameters :: !ByteString
+  , messageV3Data :: !ScopedPduData
+  }
+
+data HeaderData = HeaderData
+  { headerDataId :: !MessageId
+  , headerDataMaxSize :: !Int
+  , headerDataFlags :: !Word8
+  , headerDataSecurityModel :: !Int
+  }
+
+data AuthFlags = NoAuthNoPriv | AuthNoPriv | AuthPriv
+
+data ScopedPdu = ScopedPdu
+  { scopedPduContextEngineId :: !ByteString
+  , scopdePduContextName :: !ByteString
+  , scopedPduData :: !Pdus
+  }
 
 data Pdu = Pdu
   { pduRequestId :: !RequestId
