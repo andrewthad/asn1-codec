@@ -120,4 +120,9 @@ defaultObjectIdentifier = ObjectIdentifier (Vector.fromList [1,3,6])
 defaultPdu :: Pdu
 defaultPdu = Pdu (RequestId 0) (ErrorStatus 0) (ErrorIndex 0) Vector.empty
 
+messageV3 :: AsnEncoding MessageV3
+messageV3 = sequence
+  [
+  ]
+
 

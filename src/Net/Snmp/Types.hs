@@ -71,23 +71,41 @@ data MessageV2 = MessageV2
 
 data MessageV3 = MessageV3
   { messageV3GlobalData :: !HeaderData
-  , messageV3SecurityParameters :: !ByteString
+  , messageV3SecurityParameters :: !Usm
   , messageV3Data :: !ScopedPduData
   }
 
 data HeaderData = HeaderData
   { headerDataId :: !MessageId
   , headerDataMaxSize :: !Int
-  , headerDataFlags :: !Word8
-  , headerDataSecurityModel :: !Int
+  , headerDataFlags :: !AuthFlags
+  -- The Security Model is omitted because we only
+  -- support USM (User Security Model, represented by the number 3),
+  -- which seems to be the only one actually in use.
+  -- , headerDataSecurityModel :: !Int
   }
 
 data AuthFlags = NoAuthNoPriv | AuthNoPriv | AuthPriv
+
+data Auth =
+
+data ScopedPduData
+  = ScopedPduDataPlaintext !ScopedPdu
+  | ScopedPduDataEncrypted !ScopedPdu
 
 data ScopedPdu = ScopedPdu
   { scopedPduContextEngineId :: !ByteString
   , scopdePduContextName :: !ByteString
   , scopedPduData :: !Pdus
+  }
+
+data Usm = Usm
+  { usmEngineId :: ByteString
+  , usmEngineBoots :: Int
+  , usmEngineTime :: Int
+  , usmUserName :: ByteString
+  , usmAuthenticationParameters :: ByteString
+  , usmPrivacyParameters :: ByteString
   }
 
 data Pdu = Pdu
