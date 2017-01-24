@@ -28,6 +28,7 @@ import GHC.Integer.Logarithms (integerLog2#)
 import Data.Foldable
 import Data.Hashable (Hashable(..))
 import GHC.Generics (Generic)
+import Data.Functor.Contravariant (Contravariant(..))
 import qualified Data.Text.Encoding as TE
 import qualified Text.PrettyPrint as PP
 import qualified Data.ByteString.Lazy as LB
@@ -42,6 +43,14 @@ data AsnEncoding a
   | EncRetag TagAndExplicitness (AsnEncoding a)
   | EncUniversalValue (UniversalValue a)
 
+instance Contravariant AsnEncoding where
+  contramap f x = case x of
+    EncRetag te y -> EncRetag te (contramap f y)
+    EncUniversalValue u -> EncUniversalValue (contramap f u)
+    EncSequence xs -> EncSequence (map (contramap f) xs)
+    EncChoice c -> EncChoice (contramap f c)
+    EncSequenceOf conv enc -> EncSequenceOf (conv . f) enc
+
 data UniversalValue a
   = UniversalValueBoolean (a -> Bool) (Subtypes Bool)
   | UniversalValueInteger (a -> Integer) (Subtypes Integer)
@@ -49,6 +58,15 @@ data UniversalValue a
   | UniversalValueOctetString (a -> ByteString) (Subtypes ByteString)
   | UniversalValueTextualString StringType (a -> Text) (Subtypes Text) (Subtypes Char)
   | UniversalValueObjectIdentifier (a -> ObjectIdentifier) (Subtypes ObjectIdentifier)
+
+instance Contravariant UniversalValue where
+  contramap f x = case x of
+    UniversalValueBoolean conv s -> UniversalValueBoolean (conv . f) s
+    UniversalValueInteger conv s -> UniversalValueInteger (conv . f) s
+    UniversalValueObjectIdentifier conv s -> UniversalValueObjectIdentifier (conv . f) s
+    UniversalValueOctetString conv s -> UniversalValueOctetString (conv . f) s
+    UniversalValueTextualString typ conv s1 s2 -> UniversalValueTextualString typ (conv . f) s1 s2
+    UniversalValueNull -> UniversalValueNull
 
 newtype Subtypes a = Subtypes { getSubtypes :: [Subtype a] }
   deriving (Monoid)
@@ -88,12 +106,23 @@ data StringType
 data Explicitness = Explicit | Implicit
 data TagAndExplicitness = TagAndExplicitness Tag Explicitness
 
-data Choice a = Choice [a] (a -> ValueAndEncoding)
+data Choice a = forall b. Choice (a -> b) [b] (b -> ValueAndEncoding)
+
+instance Contravariant Choice where
+  contramap f (Choice conv bs bToValEnc) =
+    Choice (conv . f) bs bToValEnc
+
 data ValueAndEncoding = forall b. ValueAndEncoding Int OptionName b (AsnEncoding b)
 data Field a
   = forall b. FieldRequired FieldName (a -> b) (AsnEncoding b)
   | forall b. FieldOptional FieldName (a -> Maybe b) (AsnEncoding b)
   | forall b. FieldDefaulted FieldName (a -> b) b (b -> String) (b -> b -> Bool) (AsnEncoding b)
+
+instance Contravariant Field where
+  contramap f x = case x of
+    FieldRequired name g enc -> FieldRequired name (g . f) enc
+    FieldOptional name g enc -> FieldOptional name (g . f) enc
+    FieldDefaulted name g b1 b2 b3 enc -> FieldDefaulted name (g . f) b1 b2 b3 enc
 
 data TaggedByteString = TaggedByteString !Construction !Tag !LB.ByteString
 data TaggedStrictByteString = TaggedStrictByteString !Construction !Tag !ByteString

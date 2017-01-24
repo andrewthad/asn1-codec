@@ -72,41 +72,78 @@ data MessageV2 = MessageV2
 data MessageV3 = MessageV3
   { messageV3GlobalData :: !HeaderData
   , messageV3SecurityParameters :: !Usm
-  , messageV3Data :: !ScopedPduData
-  }
+  , messageV3Data :: !ScopedPdu
+  } deriving (Eq,Show)
 
 data HeaderData = HeaderData
-  { headerDataId :: !MessageId
-  , headerDataMaxSize :: !Int
-  , headerDataFlags :: !AuthFlags
+  { headerDataId :: !RequestId
+  , headerDataMaxSize :: !Int32
+  -- , headerDataFlags :: !AuthFlags
   -- The Security Model is omitted because we only
   -- support USM (User Security Model, represented by the number 3),
   -- which seems to be the only one actually in use.
   -- , headerDataSecurityModel :: !Int
-  }
+  } deriving (Eq,Show)
 
-data AuthFlags = NoAuthNoPriv | AuthNoPriv | AuthPriv
+-- data AuthFlags = AuthFlagsNoAuthNoPriv | AuthFlagsAuthNoPriv | AuthFlagsAuthPriv
 
-data Auth =
+data AuthType = AuthTypeMd5 | AuthTypeSha 
+  deriving (Eq,Show)
+data PrivType = PrivTypeDes | PrivTypeAes 
+  deriving (Eq,Show)
 
-data ScopedPduData
-  = ScopedPduDataPlaintext !ScopedPdu
-  | ScopedPduDataEncrypted !ScopedPdu
+data Crypto 
+  = NoAuthNoPriv
+  | AuthNoPriv !AuthParameters
+  | AuthPriv !AuthParameters !PrivParameters
+
+data AuthParameters = AuthParameters
+  { authParametersType :: !AuthType
+  , authParametersKey :: !ByteString
+  } deriving (Eq,Show)
+
+data PrivParameters = PrivParameters
+  { privParametersType :: !PrivType
+  , privParametersKey :: !ByteString
+  , privParametersSalt :: !Word64 
+    -- ^ Should be non-negative
+  } deriving (Eq,Show)
+
+cryptoAuth :: Crypto -> Maybe AuthParameters
+cryptoAuth x = case x of
+  NoAuthNoPriv -> Nothing
+  AuthNoPriv a -> Just a
+  AuthPriv a _ -> Just a
+
+cryptoPriv :: Crypto -> Maybe PrivParameters
+cryptoPriv x = case x of
+  NoAuthNoPriv -> Nothing
+  AuthNoPriv _ -> Nothing
+  AuthPriv _ a -> Just a
+
+data Parametered a = Parametered
+  { parameteredValue :: !a
+  , parameteredParameter :: !ByteString
+  } deriving (Eq,Show)
+
+-- data ScopedPduData
+--   = ScopedPduDataPlaintext !ScopedPdu
+--   | ScopedPduDataEncrypted !ScopedPdu
 
 data ScopedPdu = ScopedPdu
   { scopedPduContextEngineId :: !ByteString
-  , scopdePduContextName :: !ByteString
+  , scopedPduContextName :: !ByteString
   , scopedPduData :: !Pdus
-  }
+  } deriving (Eq,Show)
 
 data Usm = Usm
-  { usmEngineId :: ByteString
-  , usmEngineBoots :: Int
-  , usmEngineTime :: Int
-  , usmUserName :: ByteString
-  , usmAuthenticationParameters :: ByteString
-  , usmPrivacyParameters :: ByteString
-  }
+  { usmEngineId :: !ByteString
+  , usmEngineBoots :: !Int32
+  , usmEngineTime :: !Int32
+  , usmUserName :: !ByteString
+  -- , usmAuthenticationParameters :: !ByteString
+  -- , usmPrivacyParameters :: !ByteString
+  } deriving (Eq,Show)
 
 data Pdu = Pdu
   { pduRequestId :: !RequestId

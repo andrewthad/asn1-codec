@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Net.Snmp.Client where
 
@@ -36,6 +37,7 @@ import qualified System.Posix.Types
 
 data Session = Session
   { sessionSockets :: !(Chan NS.Socket)
+  -- , sessionCredsTimestamps :: !(TVar (Map Word32 
   , sessionSocketCount :: !Int
   , sessionRequestId :: !(TVar RequestId)
   , sessionTimeoutMicroseconds :: !Int
@@ -57,14 +59,24 @@ data Credentials
   = CredentialsConstructV2 CredentialsV2
   | CredentialsConstructV3 CredentialsV3
 
-newtype CredentialsV2 = CredentialsV2 { credentialsV2CommunityString :: ByteString }
+newtype CredentialsV2 = CredentialsV2 
+  { credentialsV2CommunityString :: ByteString }
 
 data CredentialsV3 = CredentialsV3
+  { credentialsV3Crypto :: !Crypto
+  , credentialsV3ContextName :: !ByteString
+  , credentialsV3User :: !ByteString
+  }
 
 data Context = Context
   { contextSession :: !Session
   , contextDestination :: !Destination
   , contextCredentials :: !Credentials
+  }
+
+data PerHostV3 = PerHostV3
+  { perHostV3ContextEngineId :: !ByteString
+  , perHostV3AuthoritativeEngineId :: !ByteString
   }
 
 -- | Only one connection can be open at a time on a given port.
@@ -98,48 +110,115 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
   requestId <- nextRequestId (sessionRequestId session)
   receivedPduVar <- newEmptyTMVarIO
   sock <- readChan (sessionSockets session)
-  let !bs = case creds of
-        CredentialsConstructV2 (CredentialsV2 commStr) -> id
-          $ LB.toStrict
-          $ AsnEncoding.der SnmpEncoding.messageV2
-          $ MessageV2 commStr
-          $ pdusFromRequestId requestId
-        CredentialsConstructV3 CredentialsV3 -> error "generalRequest: handle v3"
-      !bsLen = ByteString.length bs
-      go1 :: Int -> IO (Either SnmpException Pdu)
-      go1 !n1 = if n1 > 0
-        then do
-          bytesSent <- NSB.sendTo sock bs (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
-          if bytesSent /= bsLen
-            then return $ Left $ SnmpExceptionNotAllBytesSent bytesSent bsLen
-            else do
-              let go2 = do
-                    (isReadyAction,deregister) <- threadWaitReadSTM (mySockFd sock)
-                    delay <- registerDelay (sessionTimeoutMicroseconds session)
-                    isContentReady <- atomically $ (isReadyAction $> True) <|> (fini delay $> False)
-                    deregister
-                    if not isContentReady
-                      then go1 (n1 - 1)
-                      else do
-                        bs <- NSB.recv sock 10000
-                        if ByteString.null bs
-                          then return (Left SnmpExceptionSocketClosed)
-                          else case AsnDecoding.ber SnmpDecoding.messageV2 bs of
-                            Left err -> return (Left $ SnmpExceptionDecoding err)
-                            Right msg -> case messageV2Data msg of
-                              PdusResponse pdu@(Pdu respRequestId _ _ _) ->
-                                case compare requestId respRequestId of
-                                  GT -> go2
-                                  EQ -> return (Right pdu)
-                                  LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
-                              _ -> return (Left (SnmpExceptionNonPduResponseV2 msg))
-              go2
-        else return $ Left SnmpExceptionTimeout
-  e <- go1 (sessionMaxTries session)
-  writeChan (sessionSockets session) sock
-  case e >>= fromPdu of
-    Left err -> throwIO err
-    Right a -> return a
+  case creds of
+    CredentialsConstructV2 (CredentialsV2 commStr) -> do
+      let !bs = id
+            $ LB.toStrict
+            $ AsnEncoding.der SnmpEncoding.messageV2
+            $ MessageV2 commStr
+            $ pdusFromRequestId requestId
+          !bsLen = ByteString.length bs
+          go1 :: Int -> IO (Either SnmpException Pdu)
+          go1 !n1 = if n1 > 0
+            then do
+              putStrLn "Sending:"
+              print bs
+              bytesSentLen <- NSB.sendTo sock bs (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
+              if bytesSentLen /= bsLen
+                then return $ Left $ SnmpExceptionNotAllBytesSent bytesSentLen bsLen
+                else do
+                  let go2 mperHostV3 = do
+                        (isReadyAction,deregister) <- threadWaitReadSTM (mySockFd sock)
+                        delay <- registerDelay (sessionTimeoutMicroseconds session)
+                        isContentReady <- atomically $ (isReadyAction $> True) <|> (fini delay $> False)
+                        deregister
+                        if not isContentReady
+                          then go1 (n1 - 1)
+                          else do
+                            bsRecv <- NSB.recv sock 10000
+                            putStrLn "Received:"
+                            print bsRecv
+                            if ByteString.null bsRecv
+                              then return (Left SnmpExceptionSocketClosed)
+                              else case AsnDecoding.ber SnmpDecoding.messageV2 bsRecv of
+                                  Left err -> return (Left $ SnmpExceptionDecoding err)
+                                  Right msg -> case messageV2Data msg of
+                                    PdusResponse pdu@(Pdu respRequestId _ _ _) ->
+                                      case compare requestId respRequestId of
+                                        GT -> go2 mperHostV3
+                                        EQ -> return (Right pdu)
+                                        LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
+                                    _ -> return (Left (SnmpExceptionNonPduResponseV2 msg))
+                  go2 Nothing
+            else return $ Left SnmpExceptionTimeout
+      e <- go1 (sessionMaxTries session)
+      writeChan (sessionSockets session) sock
+      case e >>= fromPdu of
+        Left err -> throwIO err
+        Right a -> return a
+    CredentialsConstructV3 (CredentialsV3 crypto contextName user) -> do
+      let makeBs (PerHostV3 contextEngineId authoritativeEngineId) = id
+            $ LB.toStrict
+            $ AsnEncoding.der SnmpEncoding.messageV3
+            ( crypto
+            , MessageV3 
+              (HeaderData requestId 100000) -- making up a max size
+              (Usm authoritativeEngineId 42 1 user)
+              (ScopedPdu contextEngineId contextName (pdusFromRequestId requestId))
+            )
+          originalBs = makeBs (PerHostV3 ByteString.empty ByteString.empty)
+          go1 :: Int -> ByteString -> Bool -> IO (Either SnmpException Pdu)
+          go1 !n1 !bsSent !engineIdsAcquired = if n1 > 0
+            then do
+              putStrLn "Sending:"
+              print bsSent
+              let bsLen = ByteString.length bsSent
+              bytesSentLen <- NSB.sendTo sock bsSent (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
+              if bytesSentLen /= bsLen
+                then return $ Left $ SnmpExceptionNotAllBytesSent bytesSentLen bsLen
+                else do
+                  let go2 = do
+                        (isReadyAction,deregister) <- threadWaitReadSTM (mySockFd sock)
+                        delay <- registerDelay (sessionTimeoutMicroseconds session)
+                        isContentReady <- atomically $ (isReadyAction $> True) <|> (fini delay $> False)
+                        deregister
+                        if not isContentReady
+                          then go1 (n1 - 1) bsSent engineIdsAcquired
+                          else do
+                            bsRecv <- NSB.recv sock 10000
+                            putStrLn "Received:"
+                            print bsRecv
+                            if ByteString.null bsRecv
+                              then return (Left SnmpExceptionSocketClosed)
+                              else case AsnDecoding.ber (SnmpDecoding.messageV3 bsRecv crypto) bsRecv of
+                                Left err -> return (Left $ SnmpExceptionDecoding err)
+                                Right msg -> case scopedPduData (messageV3Data msg) of
+                                  -- somehow check the message id in here too
+                                  PdusResponse pdu@(Pdu respRequestId _ _ _) ->
+                                    case compare requestId respRequestId of
+                                      GT -> go2
+                                      EQ -> return (Right pdu)
+                                      LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
+                                  PdusReport (Pdu respRequestId _ _ _) ->
+                                    case compare requestId respRequestId of
+                                      GT -> go2
+                                      EQ -> if engineIdsAcquired
+                                        then return $ Left SnmpExceptionBadEngineId
+                                        -- Notice that n1 is not decremented in this 
+                                        -- situation. This is intentional.
+                                        else go1 n1 (makeBs $ PerHostV3
+                                            (scopedPduContextEngineId (messageV3Data msg))
+                                            (usmEngineId (messageV3SecurityParameters msg))
+                                          ) True
+                                      LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
+                                  _ -> return (Left (SnmpExceptionNonPduResponseV3 msg))
+                  go2 
+            else return $ Left SnmpExceptionTimeout
+      e <- go1 (sessionMaxTries session) originalBs False
+      writeChan (sessionSockets session) sock
+      case e >>= fromPdu of
+        Left err -> throwIO err
+        Right a -> return a
 
 get :: Context -> ObjectIdentifier -> IO ObjectSyntax
 get ctx ident = generalRequest
@@ -205,8 +284,10 @@ data SnmpException
   | SnmpExceptionEndOfMibView
   | SnmpExceptionMissedResponse !RequestId !RequestId
   | SnmpExceptionNonPduResponseV2 !MessageV2
+  | SnmpExceptionNonPduResponseV3 !MessageV3
   | SnmpExceptionDecoding !String
   | SnmpExceptionSocketClosed
+  | SnmpExceptionBadEngineId
   deriving (Show,Eq)
 
 instance Exception SnmpException

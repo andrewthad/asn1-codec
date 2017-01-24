@@ -7,8 +7,15 @@ import Language.Asn.Decoding
 import Language.Asn.Types
 import Net.Snmp.Types
 import Data.Coerce (coerce)
+import Data.ByteString (ByteString)
+import Text.Printf (printf)
+import Data.Bifunctor
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
+import qualified Net.Snmp.Encoding as E
+import qualified Data.ByteString.Builder as Builder
+import qualified Data.ByteString.Lazy as LB
+import qualified Language.Asn.Decoding as AsnDecoding
 
 messageV2 :: AsnDecoding MessageV2
 messageV2 = sequence $ MessageV2
@@ -83,6 +90,66 @@ pdus = choice
   , PdusSetRequest <$> option "set-request" (tag ContextSpecific 3 Implicit pdu)
   , PdusInformRequest <$> option "inform-request" (tag ContextSpecific 6 Implicit pdu)
   , PdusSnmpTrap <$> option "snmpV2-trap" (tag ContextSpecific 7 Implicit pdu)
+  , PdusReport <$> option "report" (tag ContextSpecific 8 Implicit pdu)
   ]
+
+-- onlyMessageId :: AsnDecoding RequestId
+-- onlyMessageId = sequence
+
+messageV3 :: ByteString -> Crypto -> AsnDecoding MessageV3
+messageV3 fullBs crypto = sequence $ MessageV3
+  <$  required "msgVersion" integer -- make this actually demand that it's 3
+  <*> required "msgGlobalData" (headerData crypto)
+  <*> required "msgSecurityParameters" 
+        (mapFailable (first ("while decoding security params" ++) . AsnDecoding.ber (usm fullBs crypto)) octetString)
+  <*> required "msgData" (scopedPduDataDecoding crypto)
+
+headerData :: Crypto -> AsnDecoding HeaderData
+headerData c = sequence $ HeaderData
+  <$> required "msgID" (coerce int)
+  <*> required "msgMaxSize" int32
+  <*  required "msgFlags" (mapFailable (\w -> if E.cryptoFlags c == w
+        then Right ()
+        else Right ()
+        -- else Left $ concat
+        --   [ "wrong auth flags in header data: "
+        --   , "expected " ++ printf "%08b" (E.cryptoFlags c)
+        --   , " but found " ++ printf "%08b" w
+        --   ]
+      ) octetStringWord8)
+  <*  required "msgSecurityModel" integer -- make sure this in actually 3
+
+scopedPduDataDecoding :: Crypto -> AsnDecoding ScopedPdu
+scopedPduDataDecoding c = choice
+  [ option "plaintext" scopedPdu
+  , option "encryptedPDU" (mapFailable (\_ -> Left "write scopedPduDataDecoding crypto") null)
+  ]
+
+scopedPdu :: AsnDecoding ScopedPdu
+scopedPdu = sequence $ ScopedPdu 
+  <$> required "contextEngineID" octetString
+  <*> required "contextName" octetString
+  <*> required "data" pdus
+
+usm :: ByteString -> Crypto -> AsnDecoding Usm -- ((Crypto,Maybe MessageV3),Usm)
+usm fullBs c = sequence $ Usm
+  <$> required "msgAuthoritativeEngineID" octetString
+  <*> required "msgAuthoritativeEngineBoots" int32
+  <*> required "msgAuthoritativeEngineTime" int32
+  <*> required "msgUserName" octetString
+  <*  required "msgAuthenticationParameters" (mapFailable (\bs -> case cryptoAuth c of
+      Nothing -> Right () -- should probably ensure that it's empty
+      Just (AuthParameters _authType _authKey) ->
+        -- should definitely validate the response. skipping this for now.
+        Right ()
+    ) octetString)
+  <*  required "msgPrivacyParameters" (mapFailable (\bs -> case cryptoPriv c of
+      Nothing -> Right ()
+      Just (PrivParameters _ _ salt) -> 
+        let bsSalt = LB.toStrict (Builder.toLazyByteString (Builder.word64BE salt))
+         in if bsSalt == bs
+              then Right ()
+              else Left "salt does not match expected salt"
+    ) octetString)
 
 

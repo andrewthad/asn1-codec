@@ -7,8 +7,18 @@ import Language.Asn.Encoding
 import Language.Asn.Types
 import Net.Snmp.Types
 import Data.Coerce (coerce)
+import Data.ByteString (ByteString)
+import Data.Functor.Contravariant
+import Data.Bifunctor
+import Data.Word
+import qualified Crypto.MAC.HMAC as HMAC
+import qualified Language.Asn.Encoding as AsnEncoding
+import qualified Data.ByteArray as BA
+import qualified Crypto.Hash as Hash
 import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Lazy as LB
 import qualified Data.Vector as Vector
+import qualified Data.ByteString.Builder as Builder
 
 messageV2 :: AsnEncoding MessageV2
 messageV2 = sequence
@@ -120,9 +130,86 @@ defaultObjectIdentifier = ObjectIdentifier (Vector.fromList [1,3,6])
 defaultPdu :: Pdu
 defaultPdu = Pdu (RequestId 0) (ErrorStatus 0) (ErrorIndex 0) Vector.empty
 
-messageV3 :: AsnEncoding MessageV3
-messageV3 = sequence
-  [
+messageV3 :: AsnEncoding (Crypto,MessageV3)
+messageV3 = contramap (\(c,m) -> ((c,Just m),m)) internalMessageV3
+
+internalMessageV3 :: AsnEncoding ((Crypto,Maybe MessageV3),MessageV3)
+internalMessageV3 = sequence
+  [ required "msgVersion" (const 3) integer
+  , required "msgGlobalData" (\((c,_),msg) -> (c,messageV3GlobalData msg)) headerData
+  , required "msgSecurityParameters" 
+      (\(pair,msg) -> LB.toStrict (AsnEncoding.der usm (pair,messageV3SecurityParameters msg))) octetString
+          -- $ AsnEncoding.der internalMessageV3 ((c,Nothing),msg)
+  , required "msgData" (\((c,_),msg) -> (c,messageV3Data msg)) scopedPduDataEncoding
   ]
 
+headerData :: AsnEncoding (Crypto,HeaderData)
+headerData = sequence
+  [ required "msgID" (headerDataId . snd) (coerce int)
+  , required "msgMaxSize" (headerDataMaxSize . snd) int32
+  , required "msgFlags" (ByteString.singleton . cryptoFlags . fst) octetString
+  , required "msgSecurityModel" (const 3) integer
+  ]
+
+cryptoFlags :: Crypto -> Word8
+cryptoFlags x = case x of
+  NoAuthNoPriv -> 0
+  AuthNoPriv _ -> 1
+  AuthPriv _ _ -> 3
+
+scopedPduDataEncoding :: AsnEncoding (Crypto,ScopedPdu)
+scopedPduDataEncoding = choice
+  [ (NoAuthNoPriv, defaultScopedPdu)
+  , (AuthPriv defaultAuthParams defaultPrivParams, defaultScopedPdu)
+  ] $ \(c,spdu) -> case cryptoPriv c of
+  Nothing -> option 0 "plaintext" spdu scopedPdu
+  Just (PrivParameters privType key salt) -> option 1 "encryptedPDU" (error "write priv encryption") octetString
+
+scopedPdu :: AsnEncoding ScopedPdu
+scopedPdu = sequence
+  [ required "contextEngineID" scopedPduContextEngineId octetString
+  , required "contextName" scopedPduContextName octetString
+  , required "data" scopedPduData pdus
+  ]
+
+usm :: AsnEncoding ((Crypto,Maybe MessageV3),Usm)
+usm = sequence
+  [ required "msgAuthoritativeEngineID" (usmEngineId . snd) octetString
+  , required "msgAuthoritativeEngineBoots" (usmEngineBoots . snd) int32
+  , required "msgAuthoritativeEngineTime" (usmEngineTime . snd) int32
+  , required "msgUserName" (usmUserName . snd) octetString
+  , required "msgAuthenticationParameters" (\((c,mmsg),_) -> case cryptoAuth c of
+      Nothing -> ByteString.empty
+      Just (AuthParameters authType authKey) -> case mmsg of
+        Nothing -> ByteString.replicate 12 0x00
+        Just msg -> id
+          $ hmacEncodedMessage authType authKey
+          $ LB.toStrict
+          $ AsnEncoding.der internalMessageV3 ((c,Nothing),msg)
+    ) octetString
+  , required "msgPrivacyParameters" (\((c,_),_) -> case cryptoPriv c of
+      Nothing -> ByteString.empty
+      Just (PrivParameters _ _ salt) -> 
+        LB.toStrict (Builder.toLazyByteString (Builder.word64BE salt))
+    ) octetString
+  ]
+
+-- hashEncodedMessage :: AuthType -> ByteString -> ByteString
+-- hashEncodedMessage x bs = case x of
+--   AuthTypeMd5 -> BA.convert (Hash.hash bs :: Hash.Digest Hash.MD5)
+--   AuthTypeSha -> BA.convert (Hash.hash bs :: Hash.Digest Hash.SHA1)
+
+hmacEncodedMessage :: AuthType -> ByteString -> ByteString -> ByteString
+hmacEncodedMessage x key bs = case x of
+  AuthTypeMd5 -> BA.convert (HMAC.hmac key bs :: HMAC.HMAC Hash.MD5)
+  AuthTypeSha -> BA.convert (HMAC.hmac key bs :: HMAC.HMAC Hash.SHA1)
+
+defaultAuthParams :: AuthParameters
+defaultAuthParams = AuthParameters AuthTypeSha ByteString.empty
+
+defaultPrivParams :: PrivParameters
+defaultPrivParams = PrivParameters PrivTypeDes ByteString.empty 0
+
+defaultScopedPdu :: ScopedPdu
+defaultScopedPdu = ScopedPdu ByteString.empty ByteString.empty (PdusGetRequest defaultPdu)
 

@@ -24,6 +24,7 @@ module Language.Asn.Decoding
   , null
   , null'
   , octetString
+  , octetStringWord8
   , octetStringWord32
   , objectIdentifier
   , choice
@@ -92,6 +93,13 @@ octetStringWord32 = mapFailable
          + unsafeShiftL 8 (fromIntegral (BSU.unsafeIndex bs 2))
          + fromIntegral (BSU.unsafeIndex bs 3)
       else Left "octetStringWord32 expects the octet string to have exactly 4 bytes"
+  ) octetString
+
+octetStringWord8 :: AsnDecoding Word8
+octetStringWord8 = mapFailable
+  ( \bs -> if ByteString.length bs == 1
+      then Right (BSU.unsafeIndex bs 1)
+      else Left "octetStringWord8 expects the octet string to have exactly 1 byte"
   ) octetString
 
 integer :: AsnDecoding Integer
@@ -179,7 +187,19 @@ decodeBerInternal x overrideTag bs1 = case x of
             (\((Tag tc tn,cstn),_) -> b .&. 192 == tagClassBit tc && b .&. 32 == constructionBit cstn && tn == theTagNumber)
             possibilities
       case mmatched of
-        Nothing -> Left "while trying to decode Choice tag, the tag did not match any of the expected tags"
+        Nothing -> Left $ concat 
+          [ "while trying to decode Choice tag, the tag did not match any of the expected tags: found "
+          , show theTagNumber
+          , " but expected one of ["
+          , List.intercalate "," $ flip map possibilities $ \((Tag tc tn, cstn),_) -> concat
+              [ show tc
+              , " "
+              , show cstn
+              , " "
+              , show tn
+              ]
+          , "]"
+          ]
         Just (_,Wrapper chosenDecoder conv2) -> do
           (c,bs3) <- decodeBerInternal chosenDecoder Nothing bs1
           r <- conv2 c

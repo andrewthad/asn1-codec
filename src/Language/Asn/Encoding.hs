@@ -78,7 +78,7 @@ toDefinitionString = PP.render . go where
   go (EncUniversalValue u) = prettyPrintUniversalValue u
   go (EncRetag (TagAndExplicitness theTag expl) e) =
     PP.text (prettyPrintTag theTag ++ " " ++ ppExplicitness expl ++ " ") <> go e
-  go (EncChoice (Choice allCtors getValAndEnc)) = (PP.$+$)
+  go (EncChoice (Choice _ allCtors getValAndEnc)) = (PP.$+$)
     "CHOICE"
     ( PP.nest 2 $ PP.vcat $ map (ppValEnc . getValAndEnc) allCtors)
   go (EncSequence fields) = (PP.$+$)
@@ -146,7 +146,7 @@ sequenceOf :: Foldable f => AsnEncoding a -> AsnEncoding (f a)
 sequenceOf = EncSequenceOf toList
 
 choice :: [a] -> (a -> ValueAndEncoding) -> AsnEncoding a
-choice xs f = EncChoice (Choice xs f)
+choice xs f = EncChoice (Choice id xs f)
 
 option :: Int -> OptionName -> b -> AsnEncoding b -> ValueAndEncoding
 option = ValueAndEncoding
@@ -240,7 +240,7 @@ encodeBerInternal x a = case x of
           Implicit -> TaggedByteString construction outerTag lbs
           Explicit -> TaggedByteString Constructed outerTag (encodeTaggedByteString (TaggedByteString construction innerTag lbs))
   EncUniversalValue p -> TaggedByteString (univsersalValueConstruction p) (makeTag Universal (universalValueTag p)) (encodePrimitiveBer p a)
-  EncChoice (Choice _ f) -> case f a of
+  EncChoice (Choice conv _ f) -> case f (conv a) of
     ValueAndEncoding _ _ b enc2 -> encodeBerInternal enc2 b
   EncSequence fields -> TaggedByteString Constructed sequenceTag (foldMap (encodeField a) fields)
   -- It's kind of weird that sequence and sequence-of share the same tag,
