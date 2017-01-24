@@ -1,4 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TupleSections #-}
 
 module Net.Snmp.Encoding where
 
@@ -11,6 +13,17 @@ import Data.ByteString (ByteString)
 import Data.Functor.Contravariant
 import Data.Bifunctor
 import Data.Word
+import Data.Int
+import Data.Bits
+import Data.Monoid
+import Data.Maybe
+import qualified Crypto.Cipher.AES as Priv
+import qualified Crypto.Cipher.DES as Priv
+import qualified Crypto.Cipher.Types as Priv
+import qualified Crypto.Data.Padding as Pad
+import qualified Crypto.Error as Priv
+import qualified Data.ByteString as B
+import qualified Data.List as List
 import qualified Crypto.MAC.HMAC as HMAC
 import qualified Language.Asn.Encoding as AsnEncoding
 import qualified Data.ByteArray as BA
@@ -130,6 +143,9 @@ defaultObjectIdentifier = ObjectIdentifier (Vector.fromList [1,3,6])
 defaultPdu :: Pdu
 defaultPdu = Pdu (RequestId 0) (ErrorStatus 0) (ErrorIndex 0) Vector.empty
 
+defaultUsm :: Usm
+defaultUsm = Usm ByteString.empty 0 0 ByteString.empty
+
 messageV3 :: AsnEncoding (Crypto,MessageV3)
 messageV3 = contramap (\(c,m) -> ((c,Just m),m)) internalMessageV3
 
@@ -140,7 +156,7 @@ internalMessageV3 = sequence
   , required "msgSecurityParameters" 
       (\(pair,msg) -> LB.toStrict (AsnEncoding.der usm (pair,messageV3SecurityParameters msg))) octetString
           -- $ AsnEncoding.der internalMessageV3 ((c,Nothing),msg)
-  , required "msgData" (\((c,_),msg) -> (c,messageV3Data msg)) scopedPduDataEncoding
+  , required "msgData" (\((c,_),msg) -> ((c,messageV3SecurityParameters msg),messageV3Data msg)) scopedPduDataEncoding
   ]
 
 headerData :: AsnEncoding (Crypto,HeaderData)
@@ -157,13 +173,25 @@ cryptoFlags x = case x of
   AuthNoPriv _ -> 1
   AuthPriv _ _ -> 3
 
-scopedPduDataEncoding :: AsnEncoding (Crypto,ScopedPdu)
+scopedPduDataEncoding :: AsnEncoding ((Crypto,Usm),ScopedPdu)
 scopedPduDataEncoding = choice
   [ (NoAuthNoPriv, defaultScopedPdu)
   , (AuthPriv defaultAuthParams defaultPrivParams, defaultScopedPdu)
-  ] $ \(c,spdu) -> case cryptoPriv c of
-  Nothing -> option 0 "plaintext" spdu scopedPdu
-  Just (PrivParameters privType key salt) -> option 1 "encryptedPDU" (error "write priv encryption") octetString
+  ] $ \((c,u),spdu) -> case c of
+  AuthPriv (AuthParameters authType authKey) (PrivParameters privType privPass salt) -> 
+    option 1 "encryptedPDU" spdu $ contramap
+    (\spdu -> option 1 "encryptedPDU" (\spdu -> 
+      case privType of
+        PrivTypeDes -> fst $ desEncrypt 
+          (passwordToKey authType authKey (usmEngineId u)) 
+          (usmEngineBoots u)
+          (fromIntegral salt)
+          (LB.toStrict (AsnEncoding.der scopedPdu spdu))
+        PrivTypeAes -> error "write AES encryption"
+      ) 
+    )
+    octetString
+  _ -> option 0 "plaintext" spdu scopedPdu
 
 scopedPdu :: AsnEncoding ScopedPdu
 scopedPdu = sequence
@@ -178,12 +206,13 @@ usm = sequence
   , required "msgAuthoritativeEngineBoots" (usmEngineBoots . snd) int32
   , required "msgAuthoritativeEngineTime" (usmEngineTime . snd) int32
   , required "msgUserName" (usmUserName . snd) octetString
-  , required "msgAuthenticationParameters" (\((c,mmsg),_) -> case cryptoAuth c of
+  , required "msgAuthenticationParameters" (\((c,mmsg),u) -> case cryptoAuth c of
       Nothing -> ByteString.empty
       Just (AuthParameters authType authKey) -> case mmsg of
         Nothing -> ByteString.replicate 12 0x00
         Just msg -> id
-          $ hmacEncodedMessage authType authKey
+          $ ByteString.take 12
+          $ hmacEncodedMessage authType (passwordToKey authType authKey (usmEngineId u))
           $ LB.toStrict
           $ AsnEncoding.der internalMessageV3 ((c,Nothing),msg)
     ) octetString
@@ -204,6 +233,21 @@ hmacEncodedMessage x key bs = case x of
   AuthTypeMd5 -> BA.convert (HMAC.hmac key bs :: HMAC.HMAC Hash.MD5)
   AuthTypeSha -> BA.convert (HMAC.hmac key bs :: HMAC.HMAC Hash.SHA1)
 
+hash :: AuthType -> ByteString -> ByteString
+hash AuthTypeMd5 = BA.convert . (Hash.hash :: ByteString -> Hash.Digest Hash.MD5)
+hash AuthTypeSha = BA.convert . (Hash.hash :: ByteString -> Hash.Digest Hash.SHA1)
+
+hashlazy :: AuthType -> LB.ByteString -> ByteString
+hashlazy AuthTypeMd5 = BA.convert . (Hash.hashlazy :: LB.ByteString -> Hash.Digest Hash.MD5)
+hashlazy AuthTypeSha = BA.convert . (Hash.hashlazy :: LB.ByteString -> Hash.Digest Hash.SHA1)
+
+passwordToKey :: AuthType -> ByteString -> ByteString -> ByteString
+passwordToKey at pass eid = hash at (authKey <> eid <> authKey)
+  where
+    mkAuthKey = hashlazy at . LB.take 1048576 . LB.fromChunks . List.repeat
+    !authKey = mkAuthKey pass
+{-# INLINE passwordToKey #-}
+
 defaultAuthParams :: AuthParameters
 defaultAuthParams = AuthParameters AuthTypeSha ByteString.empty
 
@@ -212,4 +256,56 @@ defaultPrivParams = PrivParameters PrivTypeDes ByteString.empty 0
 
 defaultScopedPdu :: ScopedPdu
 defaultScopedPdu = ScopedPdu ByteString.empty ByteString.empty (PdusGetRequest defaultPdu)
+
+type Salt = ByteString
+type Encrypted = ByteString
+type Raw = ByteString
+
+desEncrypt :: ByteString -> Int32 -> Int32 -> ByteString -> (Encrypted, Salt)
+desEncrypt privKey eb localInt =
+    (, salt) . Priv.cbcEncrypt cipher iv . Pad.pad Pad.PKCS5
+  where
+    preIV = B.drop 8 (B.take 16 privKey)
+    salt = toSalt eb localInt
+    iv :: Priv.IV Priv.DES
+    !iv = fromJust $ Priv.makeIV (B.pack $ B.zipWith xor preIV salt)
+    !cipher = mkCipher (B.take 8 privKey)
+
+aesEncrypt :: ByteString -> Int32 -> Int32 -> Int64 -> Raw -> (Encrypted, Salt)
+aesEncrypt privKey eb et rcounter =
+    (, salt) . Priv.cfbEncrypt cipher iv
+  where
+    salt = wToBs rcounter
+    iv :: Priv.IV Priv.AES128
+    !iv = fromJust $ Priv.makeIV (toSalt eb et <> salt)
+    !cipher = mkCipher (B.take 16 privKey)
+
+
+wToBs :: Int64 -> ByteString
+wToBs x = B.pack
+  [ fromIntegral (x `shiftR` 56 .&. 0xff)
+  , fromIntegral (x `shiftR` 48 .&. 0xff)
+  , fromIntegral (x `shiftR` 40 .&. 0xff)
+  , fromIntegral (x `shiftR` 32 .&. 0xff)
+  , fromIntegral (x `shiftR` 24 .&. 0xff)
+  , fromIntegral (x `shiftR` 16 .&. 0xff)
+  , fromIntegral (x `shiftR` 8 .&. 0xff)
+  , fromIntegral (x `shiftR` 0 .&. 0xff)
+  ]
+
+toSalt :: Int32 -> Int32 -> ByteString
+toSalt x y = B.pack
+  [ fromIntegral (x `shiftR` 24 .&. 0xff)
+  , fromIntegral (x `shiftR` 16 .&. 0xff)
+  , fromIntegral (x `shiftR`  8 .&. 0xff)
+  , fromIntegral (x `shiftR`  0 .&. 0xff)
+  , fromIntegral (y `shiftR` 24 .&. 0xff)
+  , fromIntegral (y `shiftR` 16 .&. 0xff)
+  , fromIntegral (y `shiftR`  8 .&. 0xff)
+  , fromIntegral (y `shiftR`  0 .&. 0xff)
+  ]
+
+mkCipher :: (Priv.Cipher c) => ByteString -> c
+mkCipher = (\(Priv.CryptoPassed x) -> x) . Priv.cipherInit
+{-# INLINE mkCipher #-}
 

@@ -21,7 +21,9 @@ import Data.ByteString (ByteString)
 import Control.Exception (throwIO,Exception)
 import Control.Applicative
 import Data.Functor
+import Data.Int
 import Control.Concurrent
+import Debug.Trace
 import qualified Data.Vector as Vector
 import qualified Data.IntMap as IntMap
 import qualified Network.Socket as NS
@@ -77,6 +79,8 @@ data Context = Context
 data PerHostV3 = PerHostV3
   { perHostV3ContextEngineId :: !ByteString
   , perHostV3AuthoritativeEngineId :: !ByteString
+  , perHostV3ReceiverTime :: !Int32
+  , perHostV3ReceiverBoots :: !Int32
   }
 
 -- | Only one connection can be open at a time on a given port.
@@ -157,16 +161,17 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
         Left err -> throwIO err
         Right a -> return a
     CredentialsConstructV3 (CredentialsV3 crypto contextName user) -> do
-      let makeBs (PerHostV3 contextEngineId authoritativeEngineId) = id
+      let makeBs (PerHostV3 contextEngineId authoritativeEngineId receiverTime boots) = id
             $ LB.toStrict
             $ AsnEncoding.der SnmpEncoding.messageV3
             ( crypto
-            , MessageV3 
+            , traceShowId $ MessageV3 
               (HeaderData requestId 100000) -- making up a max size
-              (Usm authoritativeEngineId 42 1 user)
+              (Usm authoritativeEngineId 2 receiverTime user)
               (ScopedPdu contextEngineId contextName (pdusFromRequestId requestId))
             )
-          originalBs = makeBs (PerHostV3 ByteString.empty ByteString.empty)
+          -- boots and estimated time are made up for this
+          originalBs = makeBs (PerHostV3 ByteString.empty ByteString.empty 42 42)
           go1 :: Int -> ByteString -> Bool -> IO (Either SnmpException Pdu)
           go1 !n1 !bsSent !engineIdsAcquired = if n1 > 0
             then do
@@ -203,12 +208,15 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                     case compare requestId respRequestId of
                                       GT -> go2
                                       EQ -> if engineIdsAcquired
-                                        then return $ Left SnmpExceptionBadEngineId
+                                        then return $ Left (SnmpExceptionBadEngineId msg)
                                         -- Notice that n1 is not decremented in this 
                                         -- situation. This is intentional.
-                                        else go1 n1 (makeBs $ PerHostV3
+                                        else go1 n1 
+                                          ( makeBs $ PerHostV3
                                             (scopedPduContextEngineId (messageV3Data msg))
                                             (usmEngineId (messageV3SecurityParameters msg))
+                                            (usmEngineTime (messageV3SecurityParameters msg))
+                                            (usmEngineBoots (messageV3SecurityParameters msg))
                                           ) True
                                       LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
                                   _ -> return (Left (SnmpExceptionNonPduResponseV3 msg))
@@ -287,7 +295,7 @@ data SnmpException
   | SnmpExceptionNonPduResponseV3 !MessageV3
   | SnmpExceptionDecoding !String
   | SnmpExceptionSocketClosed
-  | SnmpExceptionBadEngineId
+  | SnmpExceptionBadEngineId !MessageV3
   deriving (Show,Eq)
 
 instance Exception SnmpException
