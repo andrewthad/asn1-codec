@@ -78,21 +78,21 @@ data MessageV3 = MessageV3
 data HeaderData = HeaderData
   { headerDataId :: !RequestId
   , headerDataMaxSize :: !Int32
-  -- , headerDataFlags :: !AuthFlags
+  , headerDataFlags :: !Word8
   -- The Security Model is omitted because we only
   -- support USM (User Security Model, represented by the number 3),
   -- which seems to be the only one actually in use.
   -- , headerDataSecurityModel :: !Int
   } deriving (Eq,Show)
 
--- data AuthFlags = AuthFlagsNoAuthNoPriv | AuthFlagsAuthNoPriv | AuthFlagsAuthPriv
+data AuthFlags = AuthFlagsNoAuthNoPriv | AuthFlagsAuthNoPriv | AuthFlagsAuthPriv
 
-data AuthType = AuthTypeMd5 | AuthTypeSha 
+data AuthType = AuthTypeMd5 | AuthTypeSha
   deriving (Eq,Show)
-data PrivType = PrivTypeDes | PrivTypeAes 
+data PrivType = PrivTypeDes | PrivTypeAes
   deriving (Eq,Show)
 
-data Crypto 
+data Crypto
   = NoAuthNoPriv
   | AuthNoPriv !AuthParameters
   | AuthPriv !AuthParameters !PrivParameters
@@ -105,9 +105,15 @@ data AuthParameters = AuthParameters
 data PrivParameters = PrivParameters
   { privParametersType :: !PrivType
   , privParametersKey :: !ByteString
-  , privParametersSalt :: !Word64 
-    -- ^ Should be non-negative
   } deriving (Eq,Show)
+
+newtype AesSalt = AesSalt { getAesSalt :: Word64 }
+
+cryptoFlags :: Crypto -> Word8
+cryptoFlags x = case x of
+  NoAuthNoPriv -> 0
+  AuthNoPriv _ -> 1
+  AuthPriv _ _ -> 3
 
 cryptoAuth :: Crypto -> Maybe AuthParameters
 cryptoAuth x = case x of
@@ -126,9 +132,9 @@ data Parametered a = Parametered
   , parameteredParameter :: !ByteString
   } deriving (Eq,Show)
 
--- data ScopedPduData
---   = ScopedPduDataPlaintext !ScopedPdu
---   | ScopedPduDataEncrypted !ScopedPdu
+data ScopedPduData
+  = ScopedPduDataPlaintext !ScopedPdu
+  | ScopedPduDataEncrypted !ByteString
 
 data ScopedPdu = ScopedPdu
   { scopedPduContextEngineId :: !ByteString
@@ -141,8 +147,8 @@ data Usm = Usm
   , usmEngineBoots :: !Int32
   , usmEngineTime :: !Int32
   , usmUserName :: !ByteString
-  -- , usmAuthenticationParameters :: !ByteString
-  -- , usmPrivacyParameters :: !ByteString
+  , usmAuthenticationParameters :: !ByteString
+  , usmPrivacyParameters :: !ByteString
   } deriving (Eq,Show)
 
 data Pdu = Pdu

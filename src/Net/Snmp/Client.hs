@@ -39,7 +39,7 @@ import qualified System.Posix.Types
 
 data Session = Session
   { sessionSockets :: !(Chan NS.Socket)
-  -- , sessionCredsTimestamps :: !(TVar (Map Word32 
+  -- , sessionCredsTimestamps :: !(TVar (Map Word32
   , sessionSocketCount :: !Int
   , sessionRequestId :: !(TVar RequestId)
   , sessionTimeoutMicroseconds :: !Int
@@ -61,7 +61,7 @@ data Credentials
   = CredentialsConstructV2 CredentialsV2
   | CredentialsConstructV3 CredentialsV3
 
-newtype CredentialsV2 = CredentialsV2 
+newtype CredentialsV2 = CredentialsV2
   { credentialsV2CommunityString :: ByteString }
 
 data CredentialsV3 = CredentialsV3
@@ -74,13 +74,6 @@ data Context = Context
   { contextSession :: !Session
   , contextDestination :: !Destination
   , contextCredentials :: !Credentials
-  }
-
-data PerHostV3 = PerHostV3
-  { perHostV3ContextEngineId :: !ByteString
-  , perHostV3AuthoritativeEngineId :: !ByteString
-  , perHostV3ReceiverTime :: !Int32
-  , perHostV3ReceiverBoots :: !Int32
   }
 
 -- | Only one connection can be open at a time on a given port.
@@ -165,7 +158,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
             $ LB.toStrict
             $ AsnEncoding.der SnmpEncoding.messageV3
             ( crypto
-            , traceShowId $ MessageV3 
+            , traceShowId $ MessageV3
               (HeaderData requestId 100000) -- making up a max size
               (Usm authoritativeEngineId 2 receiverTime user)
               (ScopedPdu contextEngineId contextName (pdusFromRequestId requestId))
@@ -209,9 +202,9 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                       GT -> go2
                                       EQ -> if engineIdsAcquired
                                         then return $ Left (SnmpExceptionBadEngineId msg)
-                                        -- Notice that n1 is not decremented in this 
+                                        -- Notice that n1 is not decremented in this
                                         -- situation. This is intentional.
-                                        else go1 n1 
+                                        else go1 n1
                                           ( makeBs $ PerHostV3
                                             (scopedPduContextEngineId (messageV3Data msg))
                                             (usmEngineId (messageV3SecurityParameters msg))
@@ -220,7 +213,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                           ) True
                                       LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
                                   _ -> return (Left (SnmpExceptionNonPduResponseV3 msg))
-                  go2 
+                  go2
             else return $ Left SnmpExceptionTimeout
       e <- go1 (sessionMaxTries session) originalBs False
       writeChan (sessionSockets session) sock
