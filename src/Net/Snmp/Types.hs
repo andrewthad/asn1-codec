@@ -72,7 +72,7 @@ data MessageV2 = MessageV2
 data MessageV3 = MessageV3
   { messageV3GlobalData :: !HeaderData
   , messageV3SecurityParameters :: !Usm
-  , messageV3Data :: !ScopedPdu
+  , messageV3Data :: !ScopedPduData
   } deriving (Eq,Show)
 
 data HeaderData = HeaderData
@@ -85,7 +85,7 @@ data HeaderData = HeaderData
   -- , headerDataSecurityModel :: !Int
   } deriving (Eq,Show)
 
-data AuthFlags = AuthFlagsNoAuthNoPriv | AuthFlagsAuthNoPriv | AuthFlagsAuthPriv
+-- data AuthFlags = AuthFlagsNoAuthNoPriv | AuthFlagsAuthNoPriv | AuthFlagsAuthPriv
 
 data AuthType = AuthTypeMd5 | AuthTypeSha
   deriving (Eq,Show)
@@ -136,16 +136,18 @@ data ScopedPduData
   = ScopedPduDataPlaintext !ScopedPdu
   | ScopedPduDataEncrypted !ByteString
 
+newtype EngineId = EngineId { getEngineId :: ByteString }
+
 data ScopedPdu = ScopedPdu
-  { scopedPduContextEngineId :: !ByteString
+  { scopedPduContextEngineId :: !EngineId
   , scopedPduContextName :: !ByteString
   , scopedPduData :: !Pdus
   } deriving (Eq,Show)
 
 data Usm = Usm
-  { usmEngineId :: !ByteString
-  , usmEngineBoots :: !Int32
-  , usmEngineTime :: !Int32
+  { usmAuthoritativeEngineId :: !EngineId
+  , usmAuthoritativeEngineBoots :: !Int32
+  , usmAuthoritativeEngineTime :: !Int32
   , usmUserName :: !ByteString
   , usmAuthenticationParameters :: !ByteString
   , usmPrivacyParameters :: !ByteString

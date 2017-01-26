@@ -159,7 +159,7 @@ internalMessageV3 = sequence
   , required "msgData" (\((c,_),msg) -> ((c,messageV3SecurityParameters msg),messageV3Data msg)) scopedPduDataEncoding
   ]
 
-headerData :: AsnEncoding (Crypto,HeaderData)
+headerData :: AsnEncoding HeaderData
 headerData = sequence
   [ required "msgID" (headerDataId . snd) (coerce int)
   , required "msgMaxSize" (headerDataMaxSize . snd) int32
@@ -167,28 +167,36 @@ headerData = sequence
   , required "msgSecurityModel" (const 3) integer
   ]
 
-scopedPduDataEncoding :: AsnEncoding (((Crypto,AesSalt),Usm),ScopedPdu)
+scopedPduDataEncoding :: AsnEncoding ScopedPduData
 scopedPduDataEncoding = choice
-  [ (((NoAuthNoPriv, AesSalt 0),defaultUsm), defaultScopedPdu)
-  , (((AuthPriv defaultAuthParams defaultPrivParams, AesSalt 0),defaultUsm), defaultScopedPdu)
-  ] $ \(((c,theSalt),u),spdu) -> case c of
-  AuthPriv (AuthParameters authType authKey) (PrivParameters privType privPass) ->
-    option 1 "encryptedPDU" spdu $ contramap
-    (\spdu -> case privType of
-        PrivTypeDes -> desEncrypt
-          (passwordToKey authType authKey (usmEngineId u))
-          (usmEngineBoots u)
-          (usmEngineTime u)
-          (LB.toStrict (AsnEncoding.der scopedPdu spdu))
-        PrivTypeAes -> aesEncrypt
-          (passwordToKey authType authKey (usmEngineId u))
-          (usmEngineBoots u)
-          (usmEngineTime u)
-          theSalt
-          (LB.toStrict (AsnEncoding.der scopedPdu spdu))
-    )
-    octetString
-  _ -> option 0 "plaintext" spdu scopedPdu
+  [ ScopedPduDataPlaintext defaultScopedPdu
+  , ScopedPduDataEncrypted ByteString.empty
+  ] $ \s -> case s of
+  ScopedPduDataPlaintext spdu -> option 0 "plaintext" spdu scopedPdu
+  ScopedPduDataEncrypted bs -> option 1 "encryptedPDU" bs octetString
+
+-- scopedPduDataEncoding :: AsnEncoding (((Crypto,AesSalt),Usm),ScopedPdu)
+-- scopedPduDataEncoding = choice
+--   [ (((NoAuthNoPriv, AesSalt 0),defaultUsm), defaultScopedPdu)
+--   , (((AuthPriv defaultAuthParams defaultPrivParams, AesSalt 0),defaultUsm), defaultScopedPdu)
+--   ] $ \(((c,theSalt),u),spdu) -> case c of
+--   AuthPriv (AuthParameters authType authKey) (PrivParameters privType privPass) ->
+--     option 1 "encryptedPDU" spdu $ contramap
+--     (\spdu -> case privType of
+--         PrivTypeDes -> desEncrypt
+--           (passwordToKey authType authKey (usmEngineId u))
+--           (usmEngineBoots u)
+--           (usmEngineTime u)
+--           (LB.toStrict (AsnEncoding.der scopedPdu spdu))
+--         PrivTypeAes -> aesEncrypt
+--           (passwordToKey authType authKey (usmEngineId u))
+--           (usmEngineBoots u)
+--           (usmEngineTime u)
+--           theSalt
+--           (LB.toStrict (AsnEncoding.der scopedPdu spdu))
+--     )
+--     octetString
+--   _ -> option 0 "plaintext" spdu scopedPdu
 
 scopedPdu :: AsnEncoding ScopedPdu
 scopedPdu = sequence
@@ -197,28 +205,14 @@ scopedPdu = sequence
   , required "data" scopedPduData pdus
   ]
 
-usm :: AsnEncoding (((Crypto,AesSalt),Maybe MessageV3),Usm)
+usm :: AsnEncoding Usm
 usm = sequence
-  [ required "msgAuthoritativeEngineID" (usmEngineId . snd) octetString
-  , required "msgAuthoritativeEngineBoots" (usmEngineBoots . snd) int32
-  , required "msgAuthoritativeEngineTime" (usmEngineTime . snd) int32
-  , required "msgUserName" (usmUserName . snd) octetString
-  , required "msgAuthenticationParameters" (\(((c,s),mmsg),u) -> case cryptoAuth c of
-      Nothing -> ByteString.empty
-      Just (AuthParameters authType authKey) -> case mmsg of
-        Nothing -> ByteString.replicate 12 0x00
-        Just msg -> id
-          $ ByteString.take 12
-          $ hmacEncodedMessage authType (passwordToKey authType authKey (usmEngineId u))
-          $ LB.toStrict
-          $ AsnEncoding.der internalMessageV3 (((c,s),Nothing),msg)
-    ) octetString
-  , required "msgPrivacyParameters" (\(((c,AesSalt s),_),u) -> case cryptoPriv c of
-      Nothing -> ByteString.empty
-      Just (PrivParameters privType _) -> case privType of
-        PrivTypeDes -> toSalt (usmEngineBoots u) (usmEngineTime u)
-        PrivTypeAes -> wToBs s
-    ) octetString
+  [ required "msgAuthoritativeEngineID" usmEngineId (coerce octetString)
+  , required "msgAuthoritativeEngineBoots" usmEngineBoots int32
+  , required "msgAuthoritativeEngineTime" usmEngineTime int32
+  , required "msgUserName" usmUserName octetString
+  , required "msgAuthenticationParameters" usmAuthenticationParameters octetString
+  , required "msgPrivacyParameters" usmPrivacyParameters octetString
   ]
 
 -- hashEncodedMessage :: AuthType -> ByteString -> ByteString
