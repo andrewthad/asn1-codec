@@ -108,83 +108,50 @@ pdus = choice
   , PdusReport <$> option "report" (tag ContextSpecific 8 Implicit pdu)
   ]
 
-data PerHostV3 = PerHostV3
-  { perHostV3ContextEngineId :: !ByteString
-  , perHostV3AuthoritativeEngineId :: !ByteString
-  , perHostV3ReceiverTime :: !Int32
-  , perHostV3ReceiverBoots :: !Int32
-  }
-
 -- onlyMessageId :: AsnDecoding RequestId
 -- onlyMessageId = sequence
 
-messageV3 :: ByteString -> Crypto -> PerHostV3 -> AsnDecoding MessageV3
-messageV3 fullBs crypto perHostV3 = sequence $ MessageV3
+messageV3 :: AsnDecoding MessageV3
+messageV3 = sequence $ MessageV3
   <$  required "msgVersion" integer -- make this actually demand that it's 3
-  <*> required "msgGlobalData" (headerData crypto)
-  <*> required "msgSecurityParameters"
-        (mapFailable (first ("while decoding security params" ++) . AsnDecoding.ber (usm fullBs crypto)) octetString)
-  <*> required "msgData" (scopedPduDataDecoding crypto perHostV3)
+  <*> required "msgGlobalData" headerData
+  <*> required "msgSecurityParameters" 
+        (mapFailable (first ("while decoding security params" ++) . AsnDecoding.ber usm) octetString)
+  <*> required "msgData" scopedPduDataDecoding 
 
-headerData :: Crypto -> AsnDecoding HeaderData
-headerData c = sequence $ HeaderData
+headerData :: AsnDecoding HeaderData
+headerData = sequence $ HeaderData
   <$> required "msgID" (coerce int)
   <*> required "msgMaxSize" int32
-  <*  required "msgFlags" (mapFailable (\w -> if E.cryptoFlags c == w
-        then Right ()
-        else Right ()
-        -- Commented this out because sometimes you get back a report PDU.
-        --
-        -- else Left $ concat
-        --   [ "wrong auth flags in header data: "
-        --   , "expected " ++ printf "%08b" (E.cryptoFlags c)
-        --   , " but found " ++ printf "%08b" w
-        --   ]
-      ) octetStringWord8)
+  <*> required "msgFlags" octetStringWord8
   <*  required "msgSecurityModel" integer -- make sure this is actually 3
 
-scopedPduDataDecoding :: Crypto -> PerHostV3 -> AsnDecoding ScopedPdu
-scopedPduDataDecoding c perHostV3 = choice
-  [ option "plaintext" scopedPdu
-  , option "encryptedPDU" (mapFailable (\bs -> case c of
-      AuthPriv (AuthParameters authType authPass) (PrivParameters privType privPass salt) -> do
-        let privKey = passwordToKey authType privPass (perHostV3ContextEngineId perHostV3)
-        case privType of
-          PrivTypeAes -> error "write AES"
-          PrivTypeDes -> do
-            res <- desDecrypt privKey salt bs
-            AsnDecoding.ber scopedPdu bs
-      _ -> Left "not expecting an encrypted ScopedPdu"
-    ) octetString)
+-- else Left $ concat
+--   [ "wrong auth flags in header data: "
+--   , "expected " ++ printf "%08b" (E.cryptoFlags c)
+--   , " but found " ++ printf "%08b" w
+--   ]
+
+scopedPduDataDecoding :: AsnDecoding ScopedPduData
+scopedPduDataDecoding = choice
+  [ fmap ScopedPduDataPlaintext $ option "plaintext" scopedPdu
+  , fmap ScopedPduDataEncrypted $ option "encryptedPDU" octetString
   ]
 
 scopedPdu :: AsnDecoding ScopedPdu
 scopedPdu = sequence $ ScopedPdu
-  <$> required "contextEngineID" octetString
+  <$> required "contextEngineID" (coerce octetString)
   <*> required "contextName" octetString
   <*> required "data" pdus
 
-usm :: ByteString -> Crypto -> AesSalt -> AsnDecoding Usm -- ((Crypto,Maybe MessageV3),Usm)
-usm fullBs c = sequence $ Usm
-  <$> required "msgAuthoritativeEngineID" octetString
+usm :: AsnDecoding Usm -- ((Crypto,Maybe MessageV3),Usm)
+usm = sequence $ Usm
+  <$> required "msgAuthoritativeEngineID" (coerce octetString)
   <*> required "msgAuthoritativeEngineBoots" int32
   <*> required "msgAuthoritativeEngineTime" int32
   <*> required "msgUserName" octetString
-  <*  required "msgAuthenticationParameters" (mapFailable (\bs -> case cryptoAuth c of
-      Nothing -> Right () -- should probably ensure that it's empty
-      Just (AuthParameters _authType _authKey) ->
-        -- should definitely validate the response. skipping this for now.
-        Right ()
-    ) octetString)
-  <*  required "msgPrivacyParameters" (mapFailable (\bs -> case cryptoPriv c of
-      Nothing -> Right ()
-      Just (PrivParameters _ _) ->
-        let bsSalt = LB.toStrict (Builder.toLazyByteString (Builder.word64BE salt))
-         in if bsSalt == bs
-              then Right ()
-              else Left "salt does not match expected salt"
-    ) octetString)
-
+  <*> required "msgAuthenticationParameters" octetString
+  <*> required "msgPrivacyParameters" octetString
 
 type Salt = ByteString
 type Encrypted = ByteString

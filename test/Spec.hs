@@ -38,12 +38,14 @@ main = do
   textListFiles <- List.sort . filter isChildTestDir <$> getDirectoryContents "sample/text_list"
   varBindFiles <- List.sort . filter isChildTestDir <$> getDirectoryContents "sample/var_bind"
   messageFiles <- List.sort . filter isChildTestDir <$> getDirectoryContents "sample/message"
+  messageV3Files <- List.sort . filter isChildTestDir <$> getDirectoryContents "sample/message_v3"
   defaultMain
     [ testGroup "Human" (testEncodingDecoding "human" encHuman decHuman =<< humanFiles)
     , testGroup "Foo" (testEncodingDecoding "foo" encFoo decFoo =<< fooFiles)
     , testGroup "Text List" (testEncodingDecoding "text_list" encTexts decTexts =<< textListFiles)
     , testGroup "VarBind" (testEncodingDecoding "var_bind" SnmpEncoding.varBind SnmpDecoding.varBind =<< varBindFiles)
     , testGroup "Message V2" (testEncodingDecoding "message" SnmpEncoding.messageV2 SnmpDecoding.messageV2 =<< messageFiles)
+    -- , testGroup "Message V3" (testEncodingDecoding "message_v3" SnmpEncoding.messageV3 SnmpDecoding.messageV3 =<< messageV3Files)
     ]
 
 isChildTestDir :: String -> Bool
@@ -150,6 +152,8 @@ deriving instance Aeson.ToJSON ErrorStatus
 deriving instance Aeson.FromJSON ErrorStatus
 deriving instance Aeson.ToJSON ErrorIndex
 deriving instance Aeson.FromJSON ErrorIndex
+deriving instance Aeson.ToJSON EngineId
+deriving instance Aeson.FromJSON EngineId
 
 instance Aeson.ToJSON ByteString where
   toJSON = Aeson.String . Text.pack . ("0x" ++) . hexByteString . LB.fromStrict
@@ -173,5 +177,10 @@ $(deriveJSON (myOptions "VarBind") ''VarBind)
 $(deriveJSON (myOptions "Pdu") ''Pdu)
 $(deriveJSON (myOptions "BulkPdu") ''BulkPdu)
 $(deriveJSON (myOptions "Pdus") ''Pdus)
+$(deriveJSON (myOptions "HeaderData") ''HeaderData)
+$(deriveJSON (myOptions "ScopedPdu") ''ScopedPdu)
+$(deriveJSON (myOptions "ScopedPduData") ''ScopedPduData)
+$(deriveJSON (myOptions "Usm") ''Usm)
 $(deriveJSON (myOptions "MessageV2") ''MessageV2)
+$(deriveJSON (myOptions "MessageV3") ''MessageV3)
 

@@ -144,26 +144,26 @@ defaultPdu :: Pdu
 defaultPdu = Pdu (RequestId 0) (ErrorStatus 0) (ErrorIndex 0) Vector.empty
 
 defaultUsm :: Usm
-defaultUsm = Usm ByteString.empty 0 0 ByteString.empty
+defaultUsm = Usm defaultEngineId 0 0 ByteString.empty ByteString.empty ByteString.empty
 
-messageV3 :: AsnEncoding ((Crypto,AesSalt),MessageV3)
-messageV3 = contramap (\(c,m) -> ((c,Just m),m)) internalMessageV3
+-- messageV3 :: AsnEncoding ((Crypto,AesSalt),MessageV3)
+-- messageV3 = contramap (\(c,m) -> ((c,Just m),m)) internalMessageV3
 
-internalMessageV3 :: AsnEncoding (((Crypto,AesSalt),Maybe MessageV3),MessageV3)
-internalMessageV3 = sequence
+messageV3 :: AsnEncoding MessageV3
+messageV3 = sequence
   [ required "msgVersion" (const 3) integer
-  , required "msgGlobalData" (\(((c,_),_),msg) -> (c,messageV3GlobalData msg)) headerData
-  , required "msgSecurityParameters"
-      (\(pair,msg) -> LB.toStrict (AsnEncoding.der usm (pair,messageV3SecurityParameters msg))) octetString
-          -- $ AsnEncoding.der internalMessageV3 ((c,Nothing),msg)
-  , required "msgData" (\((c,_),msg) -> ((c,messageV3SecurityParameters msg),messageV3Data msg)) scopedPduDataEncoding
+  , required "msgGlobalData" messageV3GlobalData headerData
+  , required "msgSecurityParameters" 
+      (\msg -> LB.toStrict (AsnEncoding.der usm (messageV3SecurityParameters msg)))
+      octetString
+  , required "msgData" messageV3Data scopedPduDataEncoding
   ]
 
 headerData :: AsnEncoding HeaderData
 headerData = sequence
-  [ required "msgID" (headerDataId . snd) (coerce int)
-  , required "msgMaxSize" (headerDataMaxSize . snd) int32
-  , required "msgFlags" (ByteString.singleton . cryptoFlags . fst) octetString
+  [ required "msgID" headerDataId (coerce int)
+  , required "msgMaxSize" headerDataMaxSize int32
+  , required "msgFlags" headerDataFlags octetStringWord8
   , required "msgSecurityModel" (const 3) integer
   ]
 
@@ -200,16 +200,16 @@ scopedPduDataEncoding = choice
 
 scopedPdu :: AsnEncoding ScopedPdu
 scopedPdu = sequence
-  [ required "contextEngineID" scopedPduContextEngineId octetString
+  [ required "contextEngineID" scopedPduContextEngineId (coerce octetString)
   , required "contextName" scopedPduContextName octetString
   , required "data" scopedPduData pdus
   ]
 
 usm :: AsnEncoding Usm
 usm = sequence
-  [ required "msgAuthoritativeEngineID" usmEngineId (coerce octetString)
-  , required "msgAuthoritativeEngineBoots" usmEngineBoots int32
-  , required "msgAuthoritativeEngineTime" usmEngineTime int32
+  [ required "msgAuthoritativeEngineID" usmAuthoritativeEngineId (coerce octetString)
+  , required "msgAuthoritativeEngineBoots" usmAuthoritativeEngineBoots int32
+  , required "msgAuthoritativeEngineTime" usmAuthoritativeEngineTime int32
   , required "msgUserName" usmUserName octetString
   , required "msgAuthenticationParameters" usmAuthenticationParameters octetString
   , required "msgPrivacyParameters" usmPrivacyParameters octetString
@@ -233,8 +233,8 @@ hashlazy :: AuthType -> LB.ByteString -> ByteString
 hashlazy AuthTypeMd5 = BA.convert . (Hash.hashlazy :: LB.ByteString -> Hash.Digest Hash.MD5)
 hashlazy AuthTypeSha = BA.convert . (Hash.hashlazy :: LB.ByteString -> Hash.Digest Hash.SHA1)
 
-passwordToKey :: AuthType -> ByteString -> ByteString -> ByteString
-passwordToKey at pass eid = hash at (authKey <> eid <> authKey)
+passwordToKey :: AuthType -> ByteString -> EngineId -> ByteString
+passwordToKey at pass (EngineId eid) = hash at (authKey <> eid <> authKey)
   where
     mkAuthKey = hashlazy at . LB.take 1048576 . LB.fromChunks . List.repeat
     !authKey = mkAuthKey pass
@@ -247,7 +247,10 @@ defaultPrivParams :: PrivParameters
 defaultPrivParams = PrivParameters PrivTypeDes ByteString.empty
 
 defaultScopedPdu :: ScopedPdu
-defaultScopedPdu = ScopedPdu ByteString.empty ByteString.empty (PdusGetRequest defaultPdu)
+defaultScopedPdu = ScopedPdu defaultEngineId ByteString.empty (PdusGetRequest defaultPdu)
+
+defaultEngineId :: EngineId
+defaultEngineId = EngineId ByteString.empty
 
 -- type Salt = ByteString
 type Encrypted = ByteString

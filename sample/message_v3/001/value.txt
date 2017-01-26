@@ -1,0 +1,13 @@
+thing SNMPv3Message ::=
+{
+  msgVersion 3,
+  msgGlobalData {
+    msgID 999,
+    msgMaxSize 10000,
+    msgFlags '00'H,
+    msgSecurityModel 3
+  },
+  msgSecurityParameters {
+    
+  }
+}

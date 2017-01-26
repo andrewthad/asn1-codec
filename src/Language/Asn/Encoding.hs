@@ -32,6 +32,7 @@ module Language.Asn.Encoding
   , word64
   , word
   , octetString
+  , octetStringWord8
   , octetStringWord32
   , utf8String
   , null
@@ -59,6 +60,7 @@ import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Builder as Builder
 import qualified Data.List as List
 import qualified Data.Vector as Vector
+import qualified Data.ByteString as ByteString
 
 -- Note that DER encoding is a subset of BER encoding. If you
 -- need to encode with BER, just use this function.
@@ -194,6 +196,12 @@ word64 = EncUniversalValue (UniversalValueInteger fromIntegral (Subtypes [Subtyp
 -- TODO: add a size subtype to this
 octetStringWord32 :: AsnEncoding Word32
 octetStringWord32 = EncUniversalValue (UniversalValueOctetString (LB.toStrict . Builder.toLazyByteString . Builder.word32BE) mempty)
+
+octetStringWord8 = EncUniversalValue 
+  ( UniversalValueOctetString 
+    ByteString.singleton
+    mempty
+  )
 
 int32 :: AsnEncoding Int32
 int32 = EncUniversalValue (UniversalValueInteger fromIntegral (Subtypes [SubtypeValueRange (-2147483648) 2147483647]))

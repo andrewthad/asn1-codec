@@ -127,16 +127,13 @@ cryptoPriv x = case x of
   AuthNoPriv _ -> Nothing
   AuthPriv _ a -> Just a
 
-data Parametered a = Parametered
-  { parameteredValue :: !a
-  , parameteredParameter :: !ByteString
-  } deriving (Eq,Show)
-
 data ScopedPduData
   = ScopedPduDataPlaintext !ScopedPdu
   | ScopedPduDataEncrypted !ByteString
+  deriving (Eq,Show)
 
 newtype EngineId = EngineId { getEngineId :: ByteString }
+  deriving (Eq,Ord,Show)
 
 data ScopedPdu = ScopedPdu
   { scopedPduContextEngineId :: !EngineId
