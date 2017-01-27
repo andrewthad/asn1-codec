@@ -1,0 +1,8 @@
+{
+  "name": "giantstring_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "first_words": "Hello World",
+  "age": {
+    "tag": "modern",
+    "contents": 50
+  }
+}

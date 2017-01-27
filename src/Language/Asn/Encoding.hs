@@ -38,6 +38,9 @@ module Language.Asn.Encoding
   , null
   , null'
   , objectIdentifier
+  -- Remove anything exported below this 
+  , int64Log256
+  , encodeLength
   ) where
 
 import Prelude hiding (sequence,null)
@@ -197,6 +200,7 @@ word64 = EncUniversalValue (UniversalValueInteger fromIntegral (Subtypes [Subtyp
 octetStringWord32 :: AsnEncoding Word32
 octetStringWord32 = EncUniversalValue (UniversalValueOctetString (LB.toStrict . Builder.toLazyByteString . Builder.word32BE) mempty)
 
+octetStringWord8 :: AsnEncoding Word8
 octetStringWord8 = EncUniversalValue 
   ( UniversalValueOctetString 
     ByteString.singleton
@@ -283,7 +287,16 @@ encodeTag c (Tag tclass tnum)
 encodeLength :: Int64 -> LB.ByteString
 encodeLength x
   | x < 128 = LB.singleton (int64ToWord8 x)
-  | otherwise = error "length greater than 127: write this"
+  | otherwise =
+      let totalOctets = fromIntegral (int64Log256 x + 1) :: Word8
+       in LB.singleton (128 .|. totalOctets)
+          <> lengthBE (fromIntegral x)
+
+int64Log256 :: Int64 -> Int
+int64Log256 x = unsafeShiftR (int64Log2 x) 3
+
+int64Log2 :: Int64 -> Int
+int64Log2 x = finiteBitSize x - 1 - countLeadingZeros x
 
 int64ToWord8 :: Int64 -> Word8
 int64ToWord8 = fromIntegral
@@ -308,6 +321,17 @@ encodeText :: StringType -> Text -> ByteString
 encodeText x t = case x of
   Utf8String -> TE.encodeUtf8 t
   _ -> error "encodeText: handle more ASN.1 string types"
+
+lengthBE :: Int64 -> LB.ByteString
+lengthBE i = if i > 0
+  then Builder.toLazyByteString (goPos i)
+  else error "lengthBE: handle the negative case"
+  where
+  goPos :: Int64 -> Builder
+  goPos n1 = if n1 == 0
+    then mempty
+    else let (!n2,!byteVal) = quotRem n1 256
+          in goPos n2 <> Builder.word8 (fromIntegral byteVal)
 
 integerBE :: Integer -> LB.ByteString
 integerBE i

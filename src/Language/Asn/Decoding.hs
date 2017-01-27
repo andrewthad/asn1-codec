@@ -98,7 +98,7 @@ octetStringWord32 = mapFailable
 octetStringWord8 :: AsnDecoding Word8
 octetStringWord8 = mapFailable
   ( \bs -> if ByteString.length bs == 1
-      then Right (BSU.unsafeIndex bs 1)
+      then Right (BSU.unsafeIndex bs 0)
       else Left "octetStringWord8 expects the octet string to have exactly 1 byte"
   ) octetString
 

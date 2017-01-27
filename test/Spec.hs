@@ -40,13 +40,24 @@ main = do
   messageFiles <- List.sort . filter isChildTestDir <$> getDirectoryContents "sample/message"
   messageV3Files <- List.sort . filter isChildTestDir <$> getDirectoryContents "sample/message_v3"
   defaultMain
-    [ testGroup "Human" (testEncodingDecoding "human" encHuman decHuman =<< humanFiles)
-    , testGroup "Foo" (testEncodingDecoding "foo" encFoo decFoo =<< fooFiles)
-    , testGroup "Text List" (testEncodingDecoding "text_list" encTexts decTexts =<< textListFiles)
-    , testGroup "VarBind" (testEncodingDecoding "var_bind" SnmpEncoding.varBind SnmpDecoding.varBind =<< varBindFiles)
-    , testGroup "Message V2" (testEncodingDecoding "message" SnmpEncoding.messageV2 SnmpDecoding.messageV2 =<< messageFiles)
-    -- , testGroup "Message V3" (testEncodingDecoding "message_v3" SnmpEncoding.messageV3 SnmpDecoding.messageV3 =<< messageV3Files)
+    [ testGroup "ASN.1 Codecs"
+      [ testGroup "Human" (testEncodingDecoding "human" encHuman decHuman =<< humanFiles)
+      , testGroup "Foo" (testEncodingDecoding "foo" encFoo decFoo =<< fooFiles)
+      , testGroup "Text List" (testEncodingDecoding "text_list" encTexts decTexts =<< textListFiles)
+      , testGroup "VarBind" (testEncodingDecoding "var_bind" SnmpEncoding.varBind SnmpDecoding.varBind =<< varBindFiles)
+      , testGroup "Message V2" (testEncodingDecoding "message" SnmpEncoding.messageV2 SnmpDecoding.messageV2 =<< messageFiles)
+      -- , testGroup "Message V3" (testEncodingDecoding "message_v3" SnmpEncoding.messageV3 SnmpDecoding.messageV3 =<< messageV3Files)
+      ]
+    , testCase "DES Encryption Isomorphism" testDesEncryption
     ]
+
+testDesEncryption :: IO ()
+testDesEncryption = do
+  let plaintext = "abcdefghijklmnopqrstuvwxyz"
+      key = SnmpEncoding.passwordToKey AuthTypeMd5 "weakpassword" (EngineId "foobar")
+      (encrypted,salt) = SnmpEncoding.desEncrypt key 1 2 plaintext
+      restored = SnmpEncoding.desDecrypt key salt encrypted
+  restored @?= plaintext
 
 isChildTestDir :: String -> Bool
 isChildTestDir s = s /= "." && s /= ".." && s /= "definition.asn1"

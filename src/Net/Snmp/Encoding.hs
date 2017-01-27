@@ -234,11 +234,11 @@ hashlazy AuthTypeMd5 = BA.convert . (Hash.hashlazy :: LB.ByteString -> Hash.Dige
 hashlazy AuthTypeSha = BA.convert . (Hash.hashlazy :: LB.ByteString -> Hash.Digest Hash.SHA1)
 
 passwordToKey :: AuthType -> ByteString -> EngineId -> ByteString
-passwordToKey at pass (EngineId eid) = hash at (authKey <> eid <> authKey)
+passwordToKey at pass (EngineId eid) = 
+  hash at (authKey <> eid <> authKey)
   where
-    mkAuthKey = hashlazy at . LB.take 1048576 . LB.fromChunks . List.repeat
-    !authKey = mkAuthKey pass
-{-# INLINE passwordToKey #-}
+  mkAuthKey = hashlazy at . LB.take 1048576 . LB.fromChunks . List.repeat
+  !authKey = mkAuthKey pass
 
 defaultAuthParams :: AuthParameters
 defaultAuthParams = AuthParameters AuthTypeSha ByteString.empty
@@ -256,25 +256,66 @@ defaultEngineId = EngineId ByteString.empty
 type Encrypted = ByteString
 type Raw = ByteString
 
-desEncrypt :: ByteString -> Int32 -> Int32 -> ByteString -> Encrypted
-desEncrypt privKey eb et =
-    Priv.cbcEncrypt cipher iv . Pad.pad Pad.PKCS5
+desEncrypt :: 
+     ByteString 
+  -> Int32 
+  -> Int32 
+  -> ByteString 
+  -> (Encrypted,ByteString)
+desEncrypt privKey engineBoot localInt dataToEncrypt =
+    let desKey = B.take 8 privKey
+        preIV = B.drop 8 $ B.take 16 privKey
+        salt = toSalt engineBoot localInt
+        ivR = B.pack $ zipWith xor (B.unpack preIV) (B.unpack salt)
+        Just iv = Priv.makeIV ivR :: Maybe (Priv.IV Priv.DES)
+        -- Right key = Priv.makeKey desKey
+        Priv.CryptoPassed des = Priv.cipherInit desKey :: Priv.CryptoFailable Priv.DES
+        tailLen = (8 - B.length dataToEncrypt `rem` 8) `rem` 8
+        tailB = B.replicate tailLen 0x00
+    in (Priv.cbcEncrypt des iv (dataToEncrypt <> tailB), salt)
+
+-- desEncrypt privKey eb et =
+--     (,salt) . Priv.cbcEncrypt cipher iv . Pad.pad Pad.PKCS5
+--   where
+--     preIV = B.drop 8 (B.take 16 privKey)
+--     salt = toSalt eb et
+--     iv :: Priv.IV Priv.DES
+--     !iv = fromJust $ Priv.makeIV (B.pack $ B.zipWith xor preIV salt)
+--     !cipher = mkCipher (B.take 8 privKey)
+
+desDecrypt :: ByteString -> ByteString -> Encrypted -> Raw
+desDecrypt privKey salt =
+    stripBS . Priv.cbcDecrypt cipher iv
   where
     preIV = B.drop 8 (B.take 16 privKey)
-    salt = toSalt eb et
     iv :: Priv.IV Priv.DES
     !iv = fromJust $ Priv.makeIV (B.pack $ B.zipWith xor preIV salt)
     !cipher = mkCipher (B.take 8 privKey)
 
-aesEncrypt :: ByteString -> Int32 -> Int32 -> AesSalt -> Raw -> Encrypted
-aesEncrypt privKey eb et (AesSalt rcounter) =
-    Priv.cfbEncrypt cipher iv
+stripBS :: ByteString -> ByteString
+stripBS bs =
+    let bs' = B.drop 1 bs
+        l1 = fromIntegral (B.head bs')
+    in if testBit l1 7
+        then case clearBit l1 7 of
+                  0   -> error "something bad happened while decrypting"
+                  len ->
+                    let size = uintbs (B.take len (B.drop 1 bs'))
+                    in B.take (size + len + 2) bs
+        else B.take (l1 + 2) bs
   where
-    salt = wToBs rcounter
-    iv :: Priv.IV Priv.AES128
-    !iv = fromJust $ Priv.makeIV (toSalt eb et <> salt)
-    !cipher = mkCipher (B.take 16 privKey)
+    {- uintbs return the unsigned int represented by the bytes -}
+    uintbs = B.foldl' (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
 
+aesEncrypt :: ByteString -> Int32 -> Int32 -> AesSalt -> Raw -> (Encrypted,ByteString)
+aesEncrypt = error "aesEncrypt: write me"
+-- aesEncrypt privKey eb et (AesSalt rcounter) =
+--     (,salt) . Priv.cfbEncrypt cipher iv
+--   where
+--     salt = wToBs rcounter
+--     iv :: Priv.IV Priv.AES128
+--     !iv = fromJust $ Priv.makeIV (toSalt eb et <> salt)
+--     !cipher = mkCipher (B.take 16 privKey)
 
 wToBs :: Word64 -> ByteString
 wToBs x = B.pack
@@ -303,4 +344,24 @@ toSalt x y = B.pack
 mkCipher :: (Priv.Cipher c) => ByteString -> c
 mkCipher = (\(Priv.CryptoPassed x) -> x) . Priv.cipherInit
 {-# INLINE mkCipher #-}
+
+mkSign :: AuthType -> ByteString -> ByteString -> ByteString
+mkSign at key = B.take 12 . hmacEncodedMessage at key
+{-# INLINE mkSign #-}
+
+checkSign :: AuthType -> ByteString -> MessageV3 -> Maybe (ByteString,ByteString)
+checkSign at key msg = if expected == actual
+  then Nothing
+  else Just (expected,actual)
+  where 
+  raw = LB.toStrict (AsnEncoding.der messageV3 (resetAuthParams msg))
+  expected = mkSign at key raw
+  actual = usmAuthenticationParameters (messageV3SecurityParameters msg)
+
+resetAuthParams :: MessageV3 -> MessageV3
+resetAuthParams m = m 
+  { messageV3SecurityParameters = (messageV3SecurityParameters m)
+    { usmAuthenticationParameters = ByteString.replicate 12 0x00
+    }
+  }
 
