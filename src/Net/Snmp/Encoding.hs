@@ -20,16 +20,24 @@ import Data.Maybe
 import qualified Crypto.Cipher.AES as Priv
 import qualified Crypto.Cipher.DES as Priv
 import qualified Crypto.Cipher.Types as Priv
+-- import qualified Crypto.Cipher.DES as Priv
+-- import qualified Crypto.Cipher.AES as Priv
+
 import qualified Crypto.Data.Padding as Pad
 import qualified Crypto.Error as Priv
 import qualified Data.ByteString as B
 import qualified Data.List as List
 import qualified Crypto.MAC.HMAC as HMAC
+-- import qualified Crypto.Hash.MD5 as Md5
+-- import qualified Crypto.Hash.SHA1 as Sha
+
+
 import qualified Language.Asn.Encoding as AsnEncoding
 import qualified Data.ByteArray as BA
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LB
+import qualified Data.ByteString.Lazy as BL
 import qualified Data.Vector as Vector
 import qualified Data.ByteString.Builder as Builder
 
@@ -262,35 +270,31 @@ desEncrypt ::
   -> Int32 
   -> ByteString 
   -> (Encrypted,ByteString)
-desEncrypt privKey engineBoot localInt dataToEncrypt =
-    let desKey = B.take 8 privKey
-        preIV = B.drop 8 $ B.take 16 privKey
-        salt = toSalt engineBoot localInt
-        ivR = B.pack $ zipWith xor (B.unpack preIV) (B.unpack salt)
-        Just iv = Priv.makeIV ivR :: Maybe (Priv.IV Priv.DES)
-        -- Right key = Priv.makeKey desKey
-        Priv.CryptoPassed des = Priv.cipherInit desKey :: Priv.CryptoFailable Priv.DES
-        tailLen = (8 - B.length dataToEncrypt `rem` 8) `rem` 8
-        tailB = B.replicate tailLen 0x00
-    in (Priv.cbcEncrypt des iv (dataToEncrypt <> tailB), salt)
+desEncrypt privKey eb et =
+    (,salt) . Priv.cbcEncrypt cipher iv . Pad.pad Pad.PKCS5
+  where
+    preIV = B.drop 8 (B.take 16 privKey)
+    salt = toSalt eb et
+    iv :: Priv.IV Priv.DES
+    !iv = fromJust $ Priv.makeIV (B.pack $ B.zipWith xor preIV salt)
+    !cipher = mkCipher (B.take 8 privKey)
 
--- desEncrypt privKey eb et =
---     (,salt) . Priv.cbcEncrypt cipher iv . Pad.pad Pad.PKCS5
---   where
---     preIV = B.drop 8 (B.take 16 privKey)
---     salt = toSalt eb et
---     iv :: Priv.IV Priv.DES
---     !iv = fromJust $ Priv.makeIV (B.pack $ B.zipWith xor preIV salt)
---     !cipher = mkCipher (B.take 8 privKey)
-
-desDecrypt :: ByteString -> ByteString -> Encrypted -> Raw
+desDecrypt :: ByteString -> ByteString -> Encrypted -> Maybe Raw
 desDecrypt privKey salt =
-    stripBS . Priv.cbcDecrypt cipher iv
+    Just . stripBS . Priv.cbcDecrypt cipher iv
   where
     preIV = B.drop 8 (B.take 16 privKey)
     iv :: Priv.IV Priv.DES
     !iv = fromJust $ Priv.makeIV (B.pack $ B.zipWith xor preIV salt)
     !cipher = mkCipher (B.take 8 privKey)
+
+aesDecrypt :: ByteString -> ByteString -> Int32 -> Int32 -> Encrypted -> Maybe Raw
+aesDecrypt privKey salt eb et =
+    Just . stripBS . Priv.cfbDecrypt cipher iv
+  where
+    iv :: Priv.IV Priv.AES128
+    !iv = fromJust $ Priv.makeIV (toSalt eb et <> salt)
+    !cipher = mkCipher (B.take 16 privKey)
 
 stripBS :: ByteString -> ByteString
 stripBS bs =
@@ -308,15 +312,17 @@ stripBS bs =
     uintbs = B.foldl' (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
 
 aesEncrypt :: ByteString -> Int32 -> Int32 -> AesSalt -> Raw -> (Encrypted,ByteString)
-aesEncrypt = error "aesEncrypt: write me"
--- aesEncrypt privKey eb et (AesSalt rcounter) =
---     (,salt) . Priv.cfbEncrypt cipher iv
---   where
---     salt = wToBs rcounter
---     iv :: Priv.IV Priv.AES128
---     !iv = fromJust $ Priv.makeIV (toSalt eb et <> salt)
---     !cipher = mkCipher (B.take 16 privKey)
-
+aesEncrypt privKey eb et (AesSalt rcounter) =
+  (,salt) . Priv.cfbEncrypt cipher iv
+  where
+  salt = wToBs rcounter
+  iv :: Priv.IV Priv.AES128
+  !iv = unJust $ Priv.makeIV (toSalt eb et <> salt)
+  !cipher = mkCipher (B.take 16 privKey)
+  unJust x = case x of
+    Nothing -> error "Net.Snmp.Encoding: aesEncrypt: bad salt"
+    Just a -> a
+   
 wToBs :: Word64 -> ByteString
 wToBs x = B.pack
   [ fromIntegral (x `shiftR` 56 .&. 0xff)
@@ -348,6 +354,9 @@ mkCipher = (\(Priv.CryptoPassed x) -> x) . Priv.cipherInit
 mkSign :: AuthType -> ByteString -> ByteString -> ByteString
 mkSign at key = B.take 12 . hmacEncodedMessage at key
 {-# INLINE mkSign #-}
+
+-- mkSign :: AuthType -> ByteString -> ByteString -> ByteString
+-- mkSign = error "mkSign: write this"
 
 checkSign :: AuthType -> ByteString -> MessageV3 -> Maybe (ByteString,ByteString)
 checkSign at key msg = if expected == actual

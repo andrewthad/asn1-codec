@@ -20,11 +20,6 @@ import qualified Crypto.MAC.HMAC as HMAC
 import qualified Data.ByteArray as BA
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteString as B
-import qualified Crypto.Cipher.AES as Priv
-import qualified Crypto.Cipher.DES as Priv
-import qualified Crypto.Cipher.Types as Priv
-import qualified Crypto.Data.Padding as Pad
-import qualified Crypto.Error as Priv
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 import qualified Net.Snmp.Encoding as E
@@ -156,48 +151,4 @@ usm = sequence $ Usm
 type Salt = ByteString
 type Encrypted = ByteString
 type Raw = ByteString
-
-desDecrypt :: ByteString -> Salt -> Encrypted -> Either String Raw
-desDecrypt privKey salt =
-    stripBS . Priv.cbcDecrypt cipher iv
-  where
-    preIV = B.drop 8 (B.take 16 privKey)
-    iv :: Priv.IV Priv.DES
-    !iv = fromJust $ Priv.makeIV (B.pack $ B.zipWith xor preIV salt)
-    !cipher = mkCipher (B.take 8 privKey)
-
-stripBS :: ByteString -> Either String ByteString
-stripBS bs =
-    let bs' = B.drop 1 bs
-        l1 = fromIntegral (B.head bs')
-    in if testBit l1 7
-        then case clearBit l1 7 of
-                  0   -> Left "decoding snmp encountered error during decryption"
-                  len ->
-                    let size = uintbs (B.take len (B.drop 1 bs'))
-                    in Right (B.take (size + len + 2) bs)
-        else Right (B.take (l1 + 2) bs)
-  where
-    {- uintbs return the unsigned int represented by the bytes -}
-    uintbs = B.foldl' (\acc n -> (acc `shiftL` 8) + fromIntegral n) 0
-
-
-mkCipher :: (Priv.Cipher c) => ByteString -> c
-mkCipher = (\(Priv.CryptoPassed x) -> x) . Priv.cipherInit
-{-# INLINE mkCipher #-}
-
-hash :: AuthType -> ByteString -> ByteString
-hash AuthTypeMd5 = BA.convert . (Hash.hash :: ByteString -> Hash.Digest Hash.MD5)
-hash AuthTypeSha = BA.convert . (Hash.hash :: ByteString -> Hash.Digest Hash.SHA1)
-
-hashlazy :: AuthType -> LB.ByteString -> ByteString
-hashlazy AuthTypeMd5 = BA.convert . (Hash.hashlazy :: LB.ByteString -> Hash.Digest Hash.MD5)
-hashlazy AuthTypeSha = BA.convert . (Hash.hashlazy :: LB.ByteString -> Hash.Digest Hash.SHA1)
-
-passwordToKey :: AuthType -> ByteString -> ByteString -> ByteString
-passwordToKey at pass eid = hash at (authKey <> eid <> authKey)
-  where
-    mkAuthKey = hashlazy at . LB.take 1048576 . LB.fromChunks . List.repeat
-    !authKey = mkAuthKey pass
-{-# INLINE passwordToKey #-}
 

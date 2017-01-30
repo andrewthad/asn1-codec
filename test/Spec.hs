@@ -7,6 +7,7 @@ import Prelude hiding (sequence)
 import Language.Asn.Types
 import qualified Language.Asn.Encoding as Encoding
 import qualified Language.Asn.Decoding as Decoding
+import Net.Snmp.Client
 import Internal (myOptions)
 import Test.Framework
 import Test.Framework.Providers.HUnit
@@ -20,6 +21,7 @@ import Net.Snmp.Types
 import Data.ByteString (ByteString)
 import Numeric (readHex)
 import Control.Monad
+import qualified Data.Vector as Vector
 import qualified Data.Text as Text
 import qualified Data.List as List
 import qualified Data.Aeson as Aeson
@@ -48,8 +50,53 @@ main = do
       , testGroup "Message V2" (testEncodingDecoding "message" SnmpEncoding.messageV2 SnmpDecoding.messageV2 =<< messageFiles)
       -- , testGroup "Message V3" (testEncodingDecoding "message_v3" SnmpEncoding.messageV3 SnmpDecoding.messageV3 =<< messageV3Files)
       ]
-    , testCase "DES Encryption Isomorphism" testDesEncryption
+    -- , testCase "DES Encryption Isomorphism" testDesEncryption
+    , testGroup "SNMP Client"
+      [ testCase "V2" $ testSnmpClient (CredentialsConstructV2 (CredentialsV2 "public"))
+      , testCase "V3 NoAuthNoPriv" 
+          $ testSnmpClient 
+          $ CredentialsConstructV3 
+          $ CredentialsV3 NoAuthNoPriv "" "usr_NoAuthNoPriv"
+      , testCase "V3 AuthNoPriv MD5" $ testSnmpClient $ authCreds
+          AuthTypeMd5 "usr_MD5AuthNoPriv" "password_MD5AuthNoPriv"
+      , testCase "V3 AuthNoPriv SHA" $ testSnmpClient $ authCreds
+          AuthTypeSha "usr_SHAAuthNoPriv" "password_SHAAuthNoPriv"
+      , testCase "V3 AuthPriv MD5 DES" $ testSnmpClient $ privCreds
+          AuthTypeMd5 PrivTypeDes "usr_MD5AuthDESPriv" "password_MD5AuthDESPriv" "encryption_MD5AuthDESPriv" 
+      , testCase "V3 AuthPriv SHA DES" $ testSnmpClient $ privCreds
+          AuthTypeSha PrivTypeDes "usr_SHAAuthDESPriv" "password_SHAAuthDESPriv" "encryption_SHAAuthDESPriv" 
+      , testCase "V3 AuthPriv MD5 AES" $ testSnmpClient $ privCreds
+          AuthTypeMd5 PrivTypeAes "usr_MD5AuthAESPriv" "password_MD5AuthAESPriv" "encryption_MD5AuthAESPriv" 
+      , testCase "V3 AuthPriv SHA AES" $ testSnmpClient $ privCreds
+          AuthTypeSha PrivTypeAes "usr_SHAAuthAESPriv" "password_SHAAuthAESPriv" "encryption_SHAAuthAESPriv" 
+      ]
     ]
+
+-- This does not check for correctness in the case of concurrent
+-- SNMP requests.
+testSnmpClient :: Credentials -> IO ()
+testSnmpClient creds = do
+  s <- openSession (Config 1 2000000 1)
+  let ctx = Context s (Destination (127,0,0,1) 161) creds
+  _ <- get ctx (ObjectIdentifier (Vector.fromList [1,3,6,1,2,1,1,1,0]))
+  closeSession s
+
+authCreds :: AuthType -> ByteString -> ByteString -> Credentials
+authCreds typ user pass = CredentialsConstructV3
+  $ CredentialsV3
+    (AuthNoPriv (AuthParameters typ pass))
+    ""
+    user
+
+privCreds :: AuthType -> PrivType -> ByteString -> ByteString -> ByteString -> Credentials
+privCreds authType privType user authPass privPass = CredentialsConstructV3
+  $ CredentialsV3
+    (AuthPriv 
+      (AuthParameters authType authPass)
+      (PrivParameters privType privPass)
+    )
+    ""
+    user
 
 testDesEncryption :: IO ()
 testDesEncryption = do
@@ -57,7 +104,7 @@ testDesEncryption = do
       key = SnmpEncoding.passwordToKey AuthTypeMd5 "weakpassword" (EngineId "foobar")
       (encrypted,salt) = SnmpEncoding.desEncrypt key 1 2 plaintext
       restored = SnmpEncoding.desDecrypt key salt encrypted
-  restored @?= plaintext
+  restored @?= Just plaintext
 
 isChildTestDir :: String -> Bool
 isChildTestDir s = s /= "." && s /= ".." && s /= "definition.asn1"
