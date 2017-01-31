@@ -53,25 +53,28 @@ data Config = Config
   { configSocketPoolSize :: !Int
   , configTimeoutMicroseconds :: !Int
   , configRetries :: !Int
-  }
+  } deriving (Show,Eq)
 
 data Destination = Destination
   { destinationHost :: !(Word8,Word8,Word8,Word8)
   , destinationPort :: !Word16
-  }
+  } deriving (Show,Eq)
 
 data Credentials
   = CredentialsConstructV2 CredentialsV2
   | CredentialsConstructV3 CredentialsV3
+  deriving (Show,Eq)
 
 newtype CredentialsV2 = CredentialsV2
-  { credentialsV2CommunityString :: ByteString }
+  { credentialsV2CommunityString :: ByteString
+  } deriving (Show,Eq)
+
 
 data CredentialsV3 = CredentialsV3
   { credentialsV3Crypto :: !Crypto
   , credentialsV3ContextName :: !ByteString
   , credentialsV3User :: !ByteString
-  }
+  } deriving (Show,Eq)
 
 data Context = Context
   { contextSession :: !Session

@@ -96,6 +96,7 @@ data Crypto
   = NoAuthNoPriv
   | AuthNoPriv !AuthParameters
   | AuthPriv !AuthParameters !PrivParameters
+  deriving (Eq,Show)
 
 data AuthParameters = AuthParameters
   { authParametersType :: !AuthType
