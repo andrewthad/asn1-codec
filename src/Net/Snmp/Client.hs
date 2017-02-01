@@ -174,7 +174,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
           mkAuthParams :: RequestId -> PerHostV3 -> (ByteString,ScopedPduData) -> ByteString
           mkAuthParams reqId phv3 privPair = case cryptoAuth crypto of
             Nothing -> ByteString.empty
-            Just (AuthParameters typ password) -> 
+            Just (AuthParameters typ password) ->
               -- figure out a way to cache this
               let key = SnmpEncoding.passwordToKey typ password (perHostV3AuthoritativeEngineId phv3)
                   serializationWithoutAuth = makeBs (ByteString.replicate 12 0x00) reqId privPair phv3
@@ -183,15 +183,15 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
           mkPrivParams theSalt reqId phv3 = case crypto of
             AuthPriv (AuthParameters authType authPass) (PrivParameters privType privPass) -> case privType of
               PrivTypeAes ->
-                let (encrypted,actualSaltBs) = SnmpEncoding.aesEncrypt 
+                let (encrypted,actualSaltBs) = SnmpEncoding.aesEncrypt
                       key
                       (perHostV3ReceiverBoots phv3)
                       (perHostV3ReceiverTime phv3)
                       theSalt
                       (LB.toStrict (AsnEncoding.der SnmpEncoding.scopedPdu spdu))
                  in (actualSaltBs,ScopedPduDataEncrypted encrypted)
-              PrivTypeDes -> 
-                let (encrypted,actualSaltBs) = SnmpEncoding.desEncrypt 
+              PrivTypeDes ->
+                let (encrypted,actualSaltBs) = SnmpEncoding.desEncrypt
                       key
                       (perHostV3ReceiverBoots phv3)
                       (fromIntegral (getAesSalt theSalt))
@@ -202,7 +202,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
             _ -> (ByteString.empty,ScopedPduDataPlaintext spdu)
             where spdu = ScopedPdu (perHostV3AuthoritativeEngineId phv3) contextName (pdusFromRequestId reqId)
           makeBs :: ByteString -> RequestId -> (ByteString,ScopedPduData) -> PerHostV3 -> ByteString
-          makeBs activeAuthParams reqId (activePrivParams,spdud) (PerHostV3 authoritativeEngineId receiverTime boots) = 
+          makeBs activeAuthParams reqId (activePrivParams,spdud) (PerHostV3 authoritativeEngineId receiverTime boots) =
             let myMsg = MessageV3
                   (HeaderData reqId 1500 flags) -- making up a max size
                   (Usm authoritativeEngineId boots receiverTime user activeAuthParams activePrivParams)
@@ -262,7 +262,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                           when (not $ ByteString.null actual) $ do
                                             throwIO $ SnmpExceptionAuthenticationFailure expected actual
                                   let handleSpdu :: ScopedPdu -> IO (Either SnmpException Pdu)
-                                      handleSpdu spdu = case scopedPduData spdu of 
+                                      handleSpdu spdu = case scopedPduData spdu of
                                         -- check to make sure that we requested an unencrypted response
                                         -- somehow check the message id in here too
                                         PdusResponse pdu@(Pdu respRequestId _ _ _) ->
@@ -273,25 +273,19 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                         PdusReport (Pdu respRequestId _ _ _) -> do
                                           when inDebugMode $ putStrLn $ "Expected Request ID: " ++ show requestId
                                           when inDebugMode $ putStrLn $ "Received Request ID: " ++ show respRequestId
-                                          let handleReport = if engineIdsAcquired
-                                                then return $ Left (SnmpExceptionBadEngineId msg)
-                                                else do
-                                                  let usm = messageV3SecurityParameters msg
-                                                      phv3 = PerHostV3
-                                                        (usmAuthoritativeEngineId usm)
-                                                        (usmAuthoritativeEngineTime usm)
-                                                        (usmAuthoritativeEngineBoots usm)
-                                                  theSalt <- atomically $ nextSalt (sessionAesSalt session)
-                                                  requestId' <- nextRequestId (sessionRequestId session)
-                                                  -- Notice that n1 is not decremented in this
-                                                  -- situation. This is intentional.
-                                                  go1 n1 requestId' (fullMakeBs theSalt requestId' phv3) True
-                                          if respRequestId == RequestId 0
-                                            then handleReport
-                                            else case compare requestId respRequestId of
-                                              GT -> go2
-                                              EQ -> handleReport
-                                              LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
+                                          if engineIdsAcquired
+                                            then return $ Left (SnmpExceptionBadEngineId msg)
+                                            else do
+                                              let usm = messageV3SecurityParameters msg
+                                                  phv3 = PerHostV3
+                                                    (usmAuthoritativeEngineId usm)
+                                                    (usmAuthoritativeEngineTime usm)
+                                                    (usmAuthoritativeEngineBoots usm)
+                                              theSalt <- atomically $ nextSalt (sessionAesSalt session)
+                                              requestId' <- nextRequestId (sessionRequestId session)
+                                              -- Notice that n1 is not decremented in this
+                                              -- situation. This is intentional.
+                                              go1 n1 requestId' (fullMakeBs theSalt requestId' phv3) True
                                         _ -> return (Left (SnmpExceptionNonPduResponseV3 msg))
                                   case messageV3Data msg of
                                     ScopedPduDataEncrypted encrypted -> case crypto of
@@ -306,7 +300,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                             Left err -> throwIO (SnmpExceptionDecoding err)
                                             Right spdu -> handleSpdu spdu
                                           Nothing -> throwIO SnmpExceptionDecryptionFailure
-                                    ScopedPduDataPlaintext spdu -> handleSpdu spdu 
+                                    ScopedPduDataPlaintext spdu -> handleSpdu spdu
                   go2
             else return $ Left SnmpExceptionTimeout
       -- boots and estimated time are made up for this, we could do better
@@ -398,7 +392,7 @@ data SnmpException
   | SnmpExceptionSocketClosed
   | SnmpExceptionAuthenticationFailure !ByteString !ByteString
   | SnmpExceptionBadEngineId !MessageV3
-  | SnmpExceptionDecryptionFailure 
+  | SnmpExceptionDecryptionFailure
   deriving (Show,Eq)
 
 instance Exception SnmpException
