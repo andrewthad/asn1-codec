@@ -313,14 +313,11 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
         Right a -> return a
 
 nextSalt :: TVar AesSalt -> STM AesSalt
-nextSalt _ = return (AesSalt 0)
-
--- nextSalt :: TVar AesSalt -> STM AesSalt
--- nextSalt v = do
---   AesSalt w <- readTVar v
---   let s = AesSalt (w + 1)
---   writeTVar v s
---   return s
+nextSalt v = do
+  AesSalt w <- readTVar v
+  let s = AesSalt (w + 1)
+  writeTVar v s
+  return s
 
 get :: Context -> ObjectIdentifier -> IO ObjectSyntax
 get ctx ident = generalRequest
