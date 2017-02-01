@@ -273,7 +273,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                           when inDebugMode $ putStrLn $ "Expected Request ID: " ++ show requestId
                                           when inDebugMode $ putStrLn $ "Received Request ID: " ++ show respRequestId
                                           if engineIdsAcquired
-                                            then return $ Left (SnmpExceptionBadEngineId msg)
+                                            then return $ Left (SnmpExceptionBadEngineId sentMsg msg)
                                             else do
                                               let usm = messageV3SecurityParameters msg
                                                   phv3 = PerHostV3
@@ -388,7 +388,7 @@ data SnmpException
   | SnmpExceptionDecoding !String
   | SnmpExceptionSocketClosed
   | SnmpExceptionAuthenticationFailure !ByteString !ByteString
-  | SnmpExceptionBadEngineId !MessageV3
+  | SnmpExceptionBadEngineId !MessageV3 !MessageV3
   | SnmpExceptionDecryptionFailure
   deriving (Show,Eq)
 
