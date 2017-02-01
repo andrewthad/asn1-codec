@@ -177,7 +177,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
             Just (AuthParameters typ password) ->
               -- figure out a way to cache this
               let key = SnmpEncoding.passwordToKey typ password (perHostV3AuthoritativeEngineId phv3)
-                  serializationWithoutAuth = makeBs (ByteString.replicate 12 0x00) reqId privPair phv3
+                  serializationWithoutAuth = snd (makeBs (ByteString.replicate 12 0x00) reqId privPair phv3)
                in SnmpEncoding.mkSign typ key serializationWithoutAuth
           mkPrivParams :: AesSalt -> RequestId -> PerHostV3 -> (ByteString,ScopedPduData)
           mkPrivParams theSalt reqId phv3 = case crypto of
@@ -201,23 +201,22 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
               where key = SnmpEncoding.passwordToKey authType privPass (perHostV3AuthoritativeEngineId phv3)
             _ -> (ByteString.empty,ScopedPduDataPlaintext spdu)
             where spdu = ScopedPdu (perHostV3AuthoritativeEngineId phv3) contextName (pdusFromRequestId reqId)
-          makeBs :: ByteString -> RequestId -> (ByteString,ScopedPduData) -> PerHostV3 -> ByteString
+          makeBs :: ByteString -> RequestId -> (ByteString,ScopedPduData) -> PerHostV3 -> (MessageV3,ByteString)
           makeBs activeAuthParams reqId (activePrivParams,spdud) (PerHostV3 authoritativeEngineId receiverTime boots) =
             let myMsg = MessageV3
                   (HeaderData reqId 1500 flags) -- making up a max size
                   (Usm authoritativeEngineId boots receiverTime user activeAuthParams activePrivParams)
                   spdud
-                myMsg2 = myMsg
                 -- myMsg2 = trace ("THE MESSAGE TO SEND: " ++ show myMsg) myMsg
-             in LB.toStrict $ AsnEncoding.der SnmpEncoding.messageV3 $ myMsg2
-          fullMakeBs :: AesSalt -> RequestId -> PerHostV3 -> ByteString
+             in (myMsg, LB.toStrict $ AsnEncoding.der SnmpEncoding.messageV3 $ myMsg)
+          fullMakeBs :: AesSalt -> RequestId -> PerHostV3 -> (MessageV3, ByteString)
           fullMakeBs theSalt reqId phv3 =
             let privPair = mkPrivParams theSalt reqId phv3
                 authParams = mkAuthParams reqId phv3 privPair
-                newBs = makeBs authParams reqId privPair phv3
-             in newBs
-          go1 :: Int -> RequestId -> ByteString -> Bool -> IO (Either SnmpException Pdu)
-          go1 !n1 !requestId !bsSent !engineIdsAcquired = if n1 > 0
+                newPair = makeBs authParams reqId privPair phv3
+             in newPair
+          go1 :: Int -> RequestId -> (MessageV3,ByteString) -> Bool -> IO (Either SnmpException Pdu)
+          go1 !n1 !requestId (!sentMsg,!bsSent) !engineIdsAcquired = if n1 > 0
             then do
               when inDebugMode $ putStrLn "Sending:"
               when inDebugMode $ putStrLn (hexByteStringInternal bsSent)
@@ -236,7 +235,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                           then do
                             when inDebugMode $ putStrLn "NO RESPONSE"
                             requestId' <- nextRequestId (sessionRequestId session)
-                            go1 (n1 - 1) requestId' bsSent engineIdsAcquired
+                            go1 (n1 - 1) requestId' (sentMsg,bsSent) engineIdsAcquired
                           else do
                             bsRecv <- NSB.recv sock 10000
                             when inDebugMode $ putStrLn "Received:"
@@ -302,7 +301,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                           Nothing -> throwIO SnmpExceptionDecryptionFailure
                                     ScopedPduDataPlaintext spdu -> handleSpdu spdu
                   go2
-            else return $ Left SnmpExceptionTimeout
+            else return $ Left $ SnmpExceptionTimeoutV3 sentMsg
       -- boots and estimated time are made up for this, we could do better
       let originalPhv3 = PerHostV3 (EngineId "initial-engine-id") 0xFFFFFF 0xEEEEEE
       theSalt <- atomically $ nextSalt (sessionAesSalt session)
@@ -378,6 +377,7 @@ onlyBindings (Pdu _ errStatus@(ErrorStatus e) errIndex bindings) =
 data SnmpException
   = SnmpExceptionNotAllBytesSent !Int !Int
   | SnmpExceptionTimeout
+  | SnmpExceptionTimeoutV3 !MessageV3
   | SnmpExceptionPduError !ErrorStatus !ErrorIndex
   | SnmpExceptionMultipleBindings !Int
   | SnmpExceptionMismatchedBinding !ObjectIdentifier !ObjectIdentifier
