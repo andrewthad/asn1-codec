@@ -117,7 +117,7 @@ generalRequest ::
      (RequestId -> Pdus)
   -> (Pdu -> Either SnmpException a)
   -> Context
-  -> IO a
+  -> IO (Either SnmpException a)
 generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) creds) = do
   sock <- readChan (sessionSockets session)
   case creds of
@@ -164,9 +164,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
             else return $ Left SnmpExceptionTimeout
       e <- go1 (sessionMaxTries session)
       writeChan (sessionSockets session) sock
-      case e >>= fromPdu of
-        Left err -> throwIO err
-        Right a -> return a
+      return (e >>= fromPdu)
     CredentialsConstructV3 (CredentialsV3 crypto contextName user) -> do
       -- setting the reportable flags is very important
       -- for AuthPriv
@@ -308,9 +306,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
       requestId' <- nextRequestId (sessionRequestId session)
       e <- go1 (sessionMaxTries session) requestId' (fullMakeBs theSalt requestId' originalPhv3) False
       writeChan (sessionSockets session) sock
-      case e >>= fromPdu of
-        Left err -> throwIO err
-        Right a -> return a
+      return (e >>= fromPdu)
 
 nextSalt :: TVar AesSalt -> STM AesSalt
 nextSalt v = do
@@ -319,26 +315,41 @@ nextSalt v = do
   writeTVar v s
   return s
 
+throwSnmpException :: IO (Either SnmpException a) -> IO a
+throwSnmpException = (either throwIO return =<<)
+
 get :: Context -> ObjectIdentifier -> IO ObjectSyntax
-get ctx ident = generalRequest
+get ctx ident = throwSnmpException (get' ctx ident)
+
+getBulkStep :: Context -> Int -> ObjectIdentifier -> IO (Vector (ObjectIdentifier,ObjectSyntax))
+getBulkStep ctx maxRep ident = throwSnmpException (getBulkStep' ctx maxRep ident)
+
+getBulkChildren :: Context -> Int -> ObjectIdentifier -> IO (Vector (ObjectIdentifier,ObjectSyntax))
+getBulkChildren ctx maxRep oid1 = throwSnmpException (getBulkChildren' ctx maxRep oid1)
+
+get' :: Context -> ObjectIdentifier -> IO (Either SnmpException ObjectSyntax)
+get' ctx ident = generalRequest
   (\reqId -> PdusGetRequest (Pdu reqId (ErrorStatus 0) (ErrorIndex 0) (Vector.singleton (VarBind ident BindingResultUnspecified))))
   (singleBindingValue ident <=< onlyBindings)
   ctx
 
-getBulkStep :: Context -> Int -> ObjectIdentifier -> IO (Vector (ObjectIdentifier,ObjectSyntax))
-getBulkStep ctx maxRep ident = generalRequest
+getBulkStep' :: Context -> Int -> ObjectIdentifier -> IO (Either SnmpException (Vector (ObjectIdentifier,ObjectSyntax)))
+getBulkStep' ctx maxRep ident = generalRequest
   (\reqId -> PdusGetBulkRequest (BulkPdu reqId 0 (fromIntegral maxRep) (Vector.singleton (VarBind ident BindingResultUnspecified))))
   (fmap multipleBindings . onlyBindings)
   ctx
 
-getBulkChildren :: Context -> Int -> ObjectIdentifier -> IO (Vector (ObjectIdentifier,ObjectSyntax))
-getBulkChildren ctx maxRep oid1 = go Vector.empty oid1 where
+getBulkChildren' :: Context -> Int -> ObjectIdentifier -> IO (Either SnmpException (Vector (ObjectIdentifier,ObjectSyntax)))
+getBulkChildren' ctx maxRep oid1 = go Vector.empty oid1 where
   go prevPairs ident = do
-    pairsUnfiltered <- getBulkStep ctx maxRep ident
-    let pairs = Vector.filter (\(oid,_) -> oidIsPrefixOf oid1 oid) pairsUnfiltered
-    if Vector.null pairs
-      then return prevPairs
-      else go (prevPairs Vector.++ pairs) (fst (Vector.last pairs))
+    epairsUnfiltered <- getBulkStep' ctx maxRep ident
+    case epairsUnfiltered of
+      Left e -> return (Left e)
+      Right pairsUnfiltered -> do
+        let pairs = Vector.filter (\(oid,_) -> oidIsPrefixOf oid1 oid) pairsUnfiltered
+        if Vector.null pairs
+          then return (Right prevPairs)
+          else go (prevPairs Vector.++ pairs) (fst (Vector.last pairs))
 
 oidIsPrefixOf :: ObjectIdentifier -> ObjectIdentifier -> Bool
 oidIsPrefixOf (ObjectIdentifier a) (ObjectIdentifier b) =
