@@ -373,7 +373,7 @@ singleBindingValue oid v = if Vector.length v == 1
     case res of
       BindingResultValue obj -> Right obj
       BindingResultUnspecified -> Left SnmpExceptionUnspecified
-      BindingResultNoSuchObject -> Left SnmpExceptionNoSuchObject
+      BindingResultNoSuchObject -> Left (SnmpExceptionNoSuchObject oid)
       BindingResultNoSuchInstance -> Left SnmpExceptionNoSuchInstance
       BindingResultEndOfMibView -> Left SnmpExceptionEndOfMibView
   else Left (SnmpExceptionMultipleBindings (Vector.length v))
@@ -390,7 +390,7 @@ data SnmpException
   | SnmpExceptionMultipleBindings !Int
   | SnmpExceptionMismatchedBinding !ObjectIdentifier !ObjectIdentifier
   | SnmpExceptionUnspecified -- ^ Should not happen
-  | SnmpExceptionNoSuchObject
+  | SnmpExceptionNoSuchObject !ObjectIdentifier
   | SnmpExceptionNoSuchInstance
   | SnmpExceptionEndOfMibView
   | SnmpExceptionMissedResponse !RequestId !RequestId
