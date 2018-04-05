@@ -27,6 +27,30 @@ import qualified Data.ByteString.Builder as Builder
 import qualified Data.ByteString.Lazy as LB
 import qualified Language.Asn.Decoding as AsnDecoding
 
+trapPdu :: AsnDecoding TrapPdu
+trapPdu = sequence $ TrapPdu
+  <$> required "enterprise" objectIdentifier
+  <*> required "agent-addr"
+      ( choice
+        [ option "internet" $ tag Application 0 Implicit octetStringWord32
+        ]
+      )
+  <*> required "generic-trap" genericTrap
+  <*> required "specific-trap" integer
+  <*> required "time-stamp" integer
+  <*> required "variable-bindings" (sequenceOf varBind)
+
+genericTrap :: AsnDecoding GenericTrap
+genericTrap = flip mapFailable integer $ \i -> case i of
+  0 -> Right GenericTrapColdStart
+  1 -> Right GenericTrapWarmStart
+  2 -> Right GenericTrapLinkDown
+  3 -> Right GenericTrapLinkUp
+  4 -> Right GenericTrapAuthenticationFailure
+  5 -> Right GenericTrapEgpNeighborLoss
+  6 -> Right GenericTrapEnterpriseSpecific
+  _ -> Left "unrecognized generic-trap number"
+
 messageV2 :: AsnDecoding MessageV2
 messageV2 = sequence $ MessageV2
   <$  required "version" integer -- make this actually demand that it's 1

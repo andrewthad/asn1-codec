@@ -165,5 +165,21 @@ data BulkPdu = BulkPdu
   , bulkPduVariableBindings :: !(Vector VarBind)
   } deriving (Eq,Show)
 
+data TrapPdu = TrapPdu
+  { trapPduEnterprise :: !ObjectIdentifier
+  , trapPduAgentAddress :: !Word32
+  , trapPduGenericTrap :: !GenericTrap
+  , trapPduSpecificTrap :: !Integer
+  , trapPduTimeStamp :: !Integer
+  , trapPduVariableBindings :: [VarBind]
+  }
 
+data GenericTrap
+  = GenericTrapColdStart
+  | GenericTrapWarmStart
+  | GenericTrapLinkDown
+  | GenericTrapLinkUp
+  | GenericTrapAuthenticationFailure
+  | GenericTrapEgpNeighborLoss
+  | GenericTrapEnterpriseSpecific
 
