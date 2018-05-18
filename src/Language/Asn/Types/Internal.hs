@@ -19,6 +19,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Builder (Builder)
 import Data.Text (Text)
 import Data.Monoid
+import Data.Semigroup (Semigroup)
 import Data.Word
 import Data.Int
 import Data.Bits
@@ -69,7 +70,7 @@ instance Contravariant UniversalValue where
     UniversalValueNull -> UniversalValueNull
 
 newtype Subtypes a = Subtypes { getSubtypes :: [Subtype a] }
-  deriving (Monoid)
+  deriving (Semigroup,Monoid)
 
 newtype ObjectIdentifier = ObjectIdentifier { getObjectIdentifier :: Vector Integer }
   deriving (Eq,Ord,Show,Read,Generic)
