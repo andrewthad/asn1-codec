@@ -28,17 +28,19 @@ library
   build-depends:
       base >= 4.9 && < 5
     , integer-gmp
-    , bytestring
-    , contravariant
-    , vector
+    , bytestring >= 0.10
+    , contravariant >= 1.4
+    , vector >= 0.11
+    , primitive >= 0.6.4
     , pretty
-    , text
-    , network
+    , text >= 1.2
+    , network >= 2.6
     , stm
     , containers
-    , hashable
+    , hashable >= 1.2
     , cryptonite
     , memory
+  ghc-options: -O2
   default-language:    Haskell2010
 
 test-suite asn1-records-test

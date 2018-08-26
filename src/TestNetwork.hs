@@ -12,6 +12,7 @@ import Text.Printf (printf)
 import Network.BSD (getProtocolNumber)
 import Control.Concurrent
 import Control.Monad
+import qualified GHC.Exts as E
 import qualified Language.Asn.Encoding as E
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LB
@@ -68,7 +69,7 @@ getSystemDescription = MessageV2 "opsview"
     $ Vector.singleton $ VarBind sysDescr BindingResultUnspecified
 
 sysDescr :: ObjectIdentifier
-sysDescr = ObjectIdentifier $ Vector.fromList [1,3,6,1,2,1,1,1,0]
+sysDescr = ObjectIdentifier (E.fromList [1,3,6,1,2,1,1,1,0])
 
 hexByteString :: ByteString -> String
 hexByteString = ByteString.foldr (\w xs -> printf "%02X" w ++ xs) []

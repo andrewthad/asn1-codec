@@ -21,6 +21,7 @@ import Net.Snmp.Types
 import Data.ByteString (ByteString)
 import Numeric (readHex)
 import Control.Monad
+import qualified GHC.Exts as E
 import qualified Data.Vector as Vector
 import qualified Data.Text as Text
 import qualified Data.List as List
@@ -78,7 +79,7 @@ testSnmpClient :: Credentials -> IO ()
 testSnmpClient creds = do
   s <- openSession (Config 1 2000000 1)
   let ctx = Context s (Destination (127,0,0,1) 161) creds
-  _ <- get ctx (ObjectIdentifier (Vector.fromList [1,3,6,1,2,1,1,1,0]))
+  _ <- get ctx (ObjectIdentifier (E.fromList [1,3,6,1,2,1,1,1,0]))
   closeSession s
 
 authCreds :: AuthType -> ByteString -> ByteString -> Credentials
