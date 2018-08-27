@@ -15,6 +15,7 @@ import Data.Maybe
 import Data.Word
 import Data.Vector (Vector)
 import Data.IntMap (IntMap)
+import Data.Foldable (for_)
 import Control.Monad
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan
@@ -44,7 +45,7 @@ import qualified System.Posix.Types
 data Session = Session
   { sessionSocket :: !NS.Socket
   , sessionRequestId :: !(TVar RequestId)
-  , sessionPendingRequests :: !(TVar (Map RequestId (TMVar (Either SnmpException (Either MessageV2 MessageV3))))
+  , sessionPendingRequests :: !(TVar (Map RequestId (TMVar (Either SnmpException (Either MessageV2 MessageV3)))))
   , sessionAesSalt :: !(TVar AesSalt)
   , sessionTimeoutMicroseconds :: !Int
   , sessionMaxTries :: !Int
@@ -102,10 +103,10 @@ openSession (Config timeout retries) = do
   NS.bind sock (NS.addrAddress serveraddr)
   requestIdVar <- newTVarIO (RequestId 1)
   aesSaltVar <- newTVarIO (AesSalt 1)
-  pendingRequests <- newTVar M.empty
+  pendingRequests <- newTVarIO M.empty
   socketChan <- newChan
-  closePhaseOne <- newTMVarIO
-  closePhaseTwo <- newTMVarIO
+  closePhaseOne <- newEmptyTMVarIO
+  closePhaseTwo <- newEmptyTMVarIO
   let go = do
         (isReadyAction,deregister) <- threadWaitReadSTM (mySockFd sock)
         isContentReady <- atomically $ (isReadyAction $> True) <|> (takeTMVar closePhaseOne $> False)
@@ -118,14 +119,14 @@ openSession (Config timeout retries) = do
             -- This can be fixed though.
             let (mreqId,e) = case AsnDecoding.ber SnmpDecoding.messageV2 bsRecv of
                   Left _ -> case AsnDecoding.ber SnmpDecoding.messageV3 bsRecv of
-                    Left err -> Left (SnmpExceptionDecoding err)
+                    Left err -> (Nothing, Left (SnmpExceptionDecoding err))
                     Right msgV3 ->
-                    let reqId = headerDataId (messageV3GlobalData msgV3)
-                     in (Just reqId,Right (Right msgV3))
+                      let reqId = headerDataId (messageV3GlobalData msgV3)
+                       in (Just reqId,Right (Right msgV3))
                   Right msgV2 ->
                     let reqId = requestIdFromPdus (messageV2Data msgV2)
-                     in Right (Just reqId,Right (Left msgV2))
-            for mreqId $ \reqId -> atomically $ do
+                     in (Just reqId,Right (Left msgV2))
+            for_ mreqId $ \reqId -> atomically $ do
               reqMap <- readTVar pendingRequests
               newReqMap <- M.alterF
                 ( \case
@@ -174,32 +175,29 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
             then do
               when inDebugMode $ putStrLn "Sending:"
               when inDebugMode $ putStrLn (hexByteStringInternal bs)
+              responseHole <- newTMVarIO
+              atomically $ do
+                theMap <- readTVar (sessionPendingRequests session)
+                writeTVar (sessionPendingRequests session) (M.insert requestId responseHole theMap)
               bytesSentLen <- NSB.sendTo sock bs (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
               if bytesSentLen /= bsLen
                 then return $ Left $ SnmpExceptionNotAllBytesSent bytesSentLen bsLen
                 else do
                   let go2 mperHostV3 = do
-                        (isReadyAction,deregister) <- threadWaitReadSTM (mySockFd sock)
                         delay <- registerDelay (sessionTimeoutMicroseconds session)
-                        isContentReady <- atomically $ (isReadyAction $> True) <|> (fini delay $> False)
+                        mresponse <- atomically $ (fmap Just (takeTMVar responseHole)) <|> (fini delay $> Nothing)
                         deregister
-                        if not isContentReady
-                          then go1 (n1 - 1)
-                          else do
-                            bsRecv <- NSB.recv sock 10000
-                            when inDebugMode $ putStrLn "Received:"
-                            when inDebugMode $ print bsRecv
-                            if ByteString.null bsRecv
-                              then return (Left SnmpExceptionSocketClosed)
-                              else case AsnDecoding.ber SnmpDecoding.messageV2 bsRecv of
-                                  Left err -> return (Left $ SnmpExceptionDecoding err)
-                                  Right msg -> case messageV2Data msg of
-                                    PdusResponse pdu@(Pdu respRequestId _ _ _) ->
-                                      case compare requestId respRequestId of
-                                        GT -> go2 mperHostV3
-                                        EQ -> return (Right pdu)
-                                        LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
-                                    _ -> return (Left (SnmpExceptionNonPduResponseV2 msg))
+                        case mresponse of
+                          Nothing ->  go1 (n1 - 1)
+                          Just emsg -> case emsg of
+                            Right _ -> return (Left $ SnmpExceptionNonPduResponseV2 msg)
+                            Left msg-> case messageV2Data msg of
+                              PdusResponse pdu@(Pdu respRequestId _ _ _) ->
+                                case compare requestId respRequestId of
+                                  GT -> go2 mperHostV3
+                                  EQ -> return (Right pdu)
+                                  LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
+                              _ -> return (Left (SnmpExceptionNonPduResponseV2 msg))
                   go2 Nothing
             else return $ Left SnmpExceptionTimeout
       e <- go1 (sessionMaxTries session)
