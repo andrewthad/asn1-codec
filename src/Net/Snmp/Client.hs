@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Net.Snmp.Client where
@@ -37,21 +38,22 @@ import qualified Language.Asn.Decoding as AsnDecoding
 import qualified Language.Asn.Encoding as AsnEncoding
 import qualified Data.Map as Map
 import qualified Data.ByteString.Lazy as LB
+import qualified Data.Map.Strict as M
 import qualified System.Posix.Types
 
 data Session = Session
-  { sessionSockets :: !(Chan NS.Socket)
-  -- , sessionCredsTimestamps :: !(TVar (Map Word32
-  , sessionSocketCount :: !Int
+  { sessionSocket :: !NS.Socket
   , sessionRequestId :: !(TVar RequestId)
+  , sessionPendingRequests :: !(TVar (Map RequestId (TMVar (Either SnmpException Pdu))))
   , sessionAesSalt :: !(TVar AesSalt)
   , sessionTimeoutMicroseconds :: !Int
   , sessionMaxTries :: !Int
+  , sessionClosePhaseOne :: !(TMVar ())
+  , sessionClosePhaseTwo :: !(TMVar ())
   }
 
 data Config = Config
-  { configSocketPoolSize :: !Int
-  , configTimeoutMicroseconds :: !Int
+  { configTimeoutMicroseconds :: !Int
   , configRetries :: !Int
   } deriving (Show,Eq)
 
@@ -88,30 +90,67 @@ data PerHostV3 = PerHostV3
   , perHostV3ReceiverBoots :: !Int32
   }
 
-
-
 -- | Only one connection can be open at a time on a given port.
 openSession :: Config -> IO Session
-openSession (Config socketPoolSize timeout retries) = do
+openSession (Config timeout retries) = do
   addrinfos <- NS.getAddrInfo
     (Just (NS.defaultHints {NS.addrFlags = [NS.AI_PASSIVE]}))
     (Just "0.0.0.0")
     Nothing
   let serveraddr = head addrinfos
-  allSockets <- replicateM socketPoolSize $ do
-    sock <- NS.socket (NS.addrFamily serveraddr) NS.Datagram NS.defaultProtocol
-    NS.bind sock (NS.addrAddress serveraddr)
-    return sock
+  sock <- NS.socket (NS.addrFamily serveraddr) NS.Datagram NS.defaultProtocol
+  NS.bind sock (NS.addrAddress serveraddr)
   requestIdVar <- newTVarIO (RequestId 1)
   aesSaltVar <- newTVarIO (AesSalt 1)
+  pendingRequests <- newTVar M.empty
   socketChan <- newChan
-  writeList2Chan socketChan allSockets
-  return (Session socketChan socketPoolSize requestIdVar aesSaltVar timeout retries)
+  closePhaseOne <- newTMVarIO
+  closePhaseTwo <- newTMVarIO
+  let go = do
+        (isReadyAction,deregister) <- threadWaitReadSTM (mySockFd sock)
+        isContentReady <- atomically $ (isReadyAction $> True) <|> (takeTMVar closePhaseOne $> False)
+        deregister
+        if not isContentReady
+          then atomically (putTMVar closePhaseTwo ())
+          else do
+            bsRecv <- NSB.recv sock 1700
+            -- Sadly, we currently have no way to return a decoding error to the calling thread.
+            -- This can be fixed though.
+            let e = case AsnDecoding.ber SnmpDecoding.messageV2 bsRecv of
+                  Left _ -> case AsnDecoding.ber SnmpDecoding.messageV3 bsRecv of
+                    Left err -> Left (SnmpExceptionDecoding err)
+                    Right msgV3 -> r
+                  Right msgV2 -> do
+                    let reqId = requestIdFromPdus (messageV2Data msgV2)
+                        reply = case messageV2Data of
+                          _ 
+            atomically $ do
+              reqMap <- readTVar pendingRequests
+              newReqMap <- M.alterF
+                ( \case
+                  Nothing -> pure Nothing
+                  Just m  -> putTMVar m (Right (messageV2Data msgV2)) *> pure Nothing
+                ) reqId reqMap
+              writeTVar pendingRequests newReqMap
+  _ <- forkIO (go *> atomically (putTMVar closePhaseTwo ()))
+  return (Session sock requestIdVar pendingRequests aesSaltVar timeout retries closePhaseOne closePhaseTwo)
 
 closeSession :: Session -> IO ()
-closeSession session = replicateM_ (sessionSocketCount session) $ do
-  sock <- readChan (sessionSockets session)
-  NS.close sock
+closeSession session = do
+  atomically $ putTMVar (sessionClosePhaseOne session) ()
+  atomically $ takeTMVar (sessionClosePhaseTwo session)
+  NS.close (sessionSocket session)
+
+requestIdFromPdus :: Pdus -> RequestId
+requestIdFromPdus = \case
+  PdusGetRequest p -> pduRequestId p
+  PdusGetNextRequest p -> pduRequestId p
+  PdusGetBulkRequest p -> bulkPduRequestId p
+  PdusResponse p -> pduRequestId p
+  PdusSetRequest p -> pduRequestId p
+  PdusInformRequest p -> pduRequestId p
+  PdusSnmpTrap p -> pduRequestId p
+  PdusReport p -> pduRequestId p
 
 generalRequest ::
      (RequestId -> Pdus)
@@ -119,7 +158,7 @@ generalRequest ::
   -> Context
   -> IO (Either SnmpException a)
 generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) creds) = do
-  sock <- readChan (sessionSockets session)
+  let sock = sessionSocket session
   case creds of
     CredentialsConstructV2 (CredentialsV2 commStr) -> do
       requestId <- nextRequestId (sessionRequestId session)
@@ -163,7 +202,6 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                   go2 Nothing
             else return $ Left SnmpExceptionTimeout
       e <- go1 (sessionMaxTries session)
-      writeChan (sessionSockets session) sock
       return (e >>= fromPdu)
     CredentialsConstructV3 (CredentialsV3 crypto contextName user) -> do
       -- setting the reportable flags is very important
@@ -305,7 +343,6 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
       theSalt <- atomically $ nextSalt (sessionAesSalt session)
       requestId' <- nextRequestId (sessionRequestId session)
       e <- go1 (sessionMaxTries session) requestId' (fullMakeBs theSalt requestId' originalPhv3) False
-      writeChan (sessionSockets session) sock
       return (e >>= fromPdu)
 
 nextSalt :: TVar AesSalt -> STM AesSalt
