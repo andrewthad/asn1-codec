@@ -44,7 +44,7 @@ import qualified System.Posix.Types
 data Session = Session
   { sessionSocket :: !NS.Socket
   , sessionRequestId :: !(TVar RequestId)
-  , sessionPendingRequests :: !(TVar (Map RequestId (TMVar (Either SnmpException Pdu))))
+  , sessionPendingRequests :: !(TVar (Map RequestId (TMVar (Either SnmpException (Either MessageV2 MessageV3))))
   , sessionAesSalt :: !(TVar AesSalt)
   , sessionTimeoutMicroseconds :: !Int
   , sessionMaxTries :: !Int
@@ -113,23 +113,24 @@ openSession (Config timeout retries) = do
         if not isContentReady
           then atomically (putTMVar closePhaseTwo ())
           else do
-            bsRecv <- NSB.recv sock 1700
+            (bsRecv,_) <- NSB.recvFrom sock 1700
             -- Sadly, we currently have no way to return a decoding error to the calling thread.
             -- This can be fixed though.
-            let e = case AsnDecoding.ber SnmpDecoding.messageV2 bsRecv of
+            let (mreqId,e) = case AsnDecoding.ber SnmpDecoding.messageV2 bsRecv of
                   Left _ -> case AsnDecoding.ber SnmpDecoding.messageV3 bsRecv of
                     Left err -> Left (SnmpExceptionDecoding err)
-                    Right msgV3 -> r
-                  Right msgV2 -> do
+                    Right msgV3 ->
+                    let reqId = headerDataId (messageV3GlobalData msgV3)
+                     in (Just reqId,Right (Right msgV3))
+                  Right msgV2 ->
                     let reqId = requestIdFromPdus (messageV2Data msgV2)
-                        reply = case messageV2Data of
-                          _ 
-            atomically $ do
+                     in Right (Just reqId,Right (Left msgV2))
+            for mreqId $ \reqId -> atomically $ do
               reqMap <- readTVar pendingRequests
               newReqMap <- M.alterF
                 ( \case
                   Nothing -> pure Nothing
-                  Just m  -> putTMVar m (Right (messageV2Data msgV2)) *> pure Nothing
+                  Just m  -> putTMVar m e *> pure Nothing
                 ) reqId reqMap
               writeTVar pendingRequests newReqMap
   _ <- forkIO (go *> atomically (putTMVar closePhaseTwo ()))
