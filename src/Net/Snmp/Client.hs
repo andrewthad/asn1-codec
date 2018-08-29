@@ -175,7 +175,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
             then do
               when inDebugMode $ putStrLn "Sending:"
               when inDebugMode $ putStrLn (hexByteStringInternal bs)
-              responseHole <- newTMVarIO
+              responseHole <- newEmptyTMVarIO
               atomically $ do
                 theMap <- readTVar (sessionPendingRequests session)
                 writeTVar (sessionPendingRequests session) (M.insert requestId responseHole theMap)
@@ -186,18 +186,20 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                   let go2 mperHostV3 = do
                         delay <- registerDelay (sessionTimeoutMicroseconds session)
                         mresponse <- atomically $ (fmap Just (takeTMVar responseHole)) <|> (fini delay $> Nothing)
-                        deregister
                         case mresponse of
                           Nothing ->  go1 (n1 - 1)
-                          Just emsg -> case emsg of
-                            Right _ -> return (Left $ SnmpExceptionNonPduResponseV2 msg)
-                            Left msg-> case messageV2Data msg of
-                              PdusResponse pdu@(Pdu respRequestId _ _ _) ->
-                                case compare requestId respRequestId of
-                                  GT -> go2 mperHostV3
-                                  EQ -> return (Right pdu)
-                                  LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
-                              _ -> return (Left (SnmpExceptionNonPduResponseV2 msg))
+                          Just eemsg -> case eemsg of
+                            Left err -> return (Left err)
+                            -- Figure out a better way to handle getting a v3 response.
+                            Right emsg -> case emsg of
+                              Right msgV3 -> return (Left $ SnmpExceptionNonPduResponseV3 msgV3)
+                              Left msg-> case messageV2Data msg of
+                                PdusResponse pdu@(Pdu respRequestId _ _ _) ->
+                                  case compare requestId respRequestId of
+                                    GT -> go2 mperHostV3
+                                    EQ -> return (Right pdu)
+                                    LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
+                                _ -> return (Left (SnmpExceptionNonPduResponseV2 msg))
                   go2 Nothing
             else return $ Left SnmpExceptionTimeout
       e <- go1 (sessionMaxTries session)
@@ -256,85 +258,82 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
               when inDebugMode $ putStrLn "Sending:"
               when inDebugMode $ putStrLn (hexByteStringInternal bsSent)
               let bsLen = ByteString.length bsSent
+              responseHole <- newEmptyTMVarIO
+              atomically $ do
+                theMap <- readTVar (sessionPendingRequests session)
+                writeTVar (sessionPendingRequests session) (M.insert requestId responseHole theMap)
               bytesSentLen <- NSB.sendTo sock bsSent (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
               if bytesSentLen /= bsLen
                 then return $ Left $ SnmpExceptionNotAllBytesSent bytesSentLen bsLen
                 else do
                   let go2 :: IO (Either SnmpException Pdu)
                       go2 = do
-                        (isReadyAction,deregister) <- threadWaitReadSTM (mySockFd sock)
                         delay <- registerDelay (sessionTimeoutMicroseconds session)
-                        isContentReady <- atomically $ (isReadyAction $> True) <|> (fini delay $> False)
-                        deregister
-                        if not isContentReady
-                          then do
+                        mresponse <- atomically $ (fmap Just (takeTMVar responseHole)) <|> (fini delay $> Nothing)
+                        case mresponse of
+                          Nothing -> do
                             when inDebugMode $ putStrLn "NO RESPONSE"
                             requestId' <- nextRequestId (sessionRequestId session)
                             go1 (n1 - 1) requestId' (sentMsg,bsSent) engineIdsAcquired
-                          else do
-                            bsRecv <- NSB.recv sock 10000
-                            when inDebugMode $ putStrLn "Received:"
-                            when inDebugMode $ putStrLn (hexByteStringInternal bsRecv)
-                            if ByteString.null bsRecv
-                              then return (Left SnmpExceptionSocketClosed)
-                              else case AsnDecoding.ber SnmpDecoding.messageV3 bsRecv of
-                                Left err -> return (Left $ SnmpExceptionDecoding err)
-                                Right msg -> do
-                                  case cryptoAuth crypto of
-                                    Nothing -> return ()
-                                    Just (AuthParameters typ password) -> do
-                                      when inDebugMode $ putStrLn "THE RECEIVED MESSAGE"
-                                      when inDebugMode $ print msg
-                                      let reencoded = LB.toStrict $ AsnEncoding.der SnmpEncoding.messageV3 msg
-                                      when inDebugMode $ putStrLn $ hexByteStringInternal $ reencoded
-                                      when (reencoded /= bsRecv) $ do
-                                        when inDebugMode $ putStrLn "NOT THE SAME"
-                                      let key = SnmpEncoding.passwordToKey typ password (usmAuthoritativeEngineId (messageV3SecurityParameters msg))
-                                      case SnmpEncoding.checkSign typ key msg of
-                                        Nothing -> return ()
-                                        Just (expected,actual) -> do
-                                          when (not $ ByteString.null actual) $ do
-                                            throwIO $ SnmpExceptionAuthenticationFailure expected actual
-                                  let handleSpdu :: ScopedPdu -> IO (Either SnmpException Pdu)
-                                      handleSpdu spdu = case scopedPduData spdu of
-                                        -- check to make sure that we requested an unencrypted response
-                                        -- somehow check the message id in here too
-                                        PdusResponse pdu@(Pdu respRequestId _ _ _) ->
-                                          case compare requestId respRequestId of
-                                            GT -> go2
-                                            EQ -> return (Right pdu)
-                                            LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
-                                        PdusReport (Pdu respRequestId _ _ _) -> do
-                                          when inDebugMode $ putStrLn $ "Expected Request ID: " ++ show requestId
-                                          when inDebugMode $ putStrLn $ "Received Request ID: " ++ show respRequestId
-                                          if engineIdsAcquired
-                                            then return $ Left (SnmpExceptionBadEngineId sentMsg msg)
-                                            else do
-                                              let usm = messageV3SecurityParameters msg
-                                                  phv3 = PerHostV3
-                                                    (usmAuthoritativeEngineId usm)
-                                                    (usmAuthoritativeEngineTime usm)
-                                                    (usmAuthoritativeEngineBoots usm)
-                                              theSalt <- atomically $ nextSalt (sessionAesSalt session)
-                                              requestId' <- nextRequestId (sessionRequestId session)
-                                              -- Notice that n1 is not decremented in this
-                                              -- situation. This is intentional.
-                                              go1 n1 requestId' (fullMakeBs theSalt requestId' phv3) True
-                                        _ -> return (Left (SnmpExceptionNonPduResponseV3 msg))
-                                  case messageV3Data msg of
-                                    ScopedPduDataEncrypted encrypted -> case crypto of
-                                      AuthPriv (AuthParameters authType _) (PrivParameters privType privPass) -> do
-                                        let usm = messageV3SecurityParameters msg
-                                            key = SnmpEncoding.passwordToKey authType privPass (usmAuthoritativeEngineId usm)
-                                            mdecrypted = case privType of
-                                              PrivTypeDes -> SnmpEncoding.desDecrypt key (usmPrivacyParameters usm) encrypted
-                                              PrivTypeAes -> SnmpEncoding.aesDecrypt key (usmPrivacyParameters usm) (usmAuthoritativeEngineBoots usm) (usmAuthoritativeEngineTime usm) encrypted
-                                        case mdecrypted of
-                                          Just bs -> case AsnDecoding.ber SnmpDecoding.scopedPdu bs of
-                                            Left err -> throwIO (SnmpExceptionDecoding err)
-                                            Right spdu -> handleSpdu spdu
-                                          Nothing -> throwIO SnmpExceptionDecryptionFailure
-                                    ScopedPduDataPlaintext spdu -> handleSpdu spdu
+                          Just eemsg -> case eemsg of
+                            Left err -> return (Left err)
+                            Right emsg -> case emsg of
+                              -- TODO: better error type for this
+                              Left msgV2 -> return (Left (SnmpExceptionNonPduResponseV2 msgV2))
+                              Right msg-> do
+                                case cryptoAuth crypto of
+                                  Nothing -> return ()
+                                  Just (AuthParameters typ password) -> do
+                                    when inDebugMode $ putStrLn "THE RECEIVED MESSAGE"
+                                    when inDebugMode $ print msg
+                                    let reencoded = LB.toStrict $ AsnEncoding.der SnmpEncoding.messageV3 msg
+                                    when inDebugMode $ putStrLn $ hexByteStringInternal $ reencoded
+                                    let key = SnmpEncoding.passwordToKey typ password (usmAuthoritativeEngineId (messageV3SecurityParameters msg))
+                                    case SnmpEncoding.checkSign typ key msg of
+                                      Nothing -> return ()
+                                      Just (expected,actual) -> do
+                                        when (not $ ByteString.null actual) $ do
+                                          throwIO $ SnmpExceptionAuthenticationFailure expected actual
+                                let handleSpdu :: ScopedPdu -> IO (Either SnmpException Pdu)
+                                    handleSpdu spdu = case scopedPduData spdu of
+                                      -- check to make sure that we requested an unencrypted response
+                                      -- somehow check the message id in here too
+                                      PdusResponse pdu@(Pdu respRequestId _ _ _) ->
+                                        case compare requestId respRequestId of
+                                          GT -> go2
+                                          EQ -> return (Right pdu)
+                                          LT -> return $ Left $ SnmpExceptionMissedResponse requestId respRequestId
+                                      PdusReport (Pdu respRequestId _ _ _) -> do
+                                        when inDebugMode $ putStrLn $ "Expected Request ID: " ++ show requestId
+                                        when inDebugMode $ putStrLn $ "Received Request ID: " ++ show respRequestId
+                                        if engineIdsAcquired
+                                          then return $ Left (SnmpExceptionBadEngineId sentMsg msg)
+                                          else do
+                                            let usm = messageV3SecurityParameters msg
+                                                phv3 = PerHostV3
+                                                  (usmAuthoritativeEngineId usm)
+                                                  (usmAuthoritativeEngineTime usm)
+                                                  (usmAuthoritativeEngineBoots usm)
+                                            theSalt <- atomically $ nextSalt (sessionAesSalt session)
+                                            requestId' <- nextRequestId (sessionRequestId session)
+                                            -- Notice that n1 is not decremented in this
+                                            -- situation. This is intentional.
+                                            go1 n1 requestId' (fullMakeBs theSalt requestId' phv3) True
+                                      _ -> return (Left (SnmpExceptionNonPduResponseV3 msg))
+                                case messageV3Data msg of
+                                  ScopedPduDataEncrypted encrypted -> case crypto of
+                                    AuthPriv (AuthParameters authType _) (PrivParameters privType privPass) -> do
+                                      let usm = messageV3SecurityParameters msg
+                                          key = SnmpEncoding.passwordToKey authType privPass (usmAuthoritativeEngineId usm)
+                                          mdecrypted = case privType of
+                                            PrivTypeDes -> SnmpEncoding.desDecrypt key (usmPrivacyParameters usm) encrypted
+                                            PrivTypeAes -> SnmpEncoding.aesDecrypt key (usmPrivacyParameters usm) (usmAuthoritativeEngineBoots usm) (usmAuthoritativeEngineTime usm) encrypted
+                                      case mdecrypted of
+                                        Just bs -> case AsnDecoding.ber SnmpDecoding.scopedPdu bs of
+                                          Left err -> throwIO (SnmpExceptionDecoding err)
+                                          Right spdu -> handleSpdu spdu
+                                        Nothing -> throwIO SnmpExceptionDecryptionFailure
+                                  ScopedPduDataPlaintext spdu -> handleSpdu spdu
                   go2
             else return $ Left $ SnmpExceptionTimeoutV3 sentMsg
       -- boots and estimated time are made up for this, we could do better
