@@ -17,6 +17,7 @@ import Data.Int
 import Data.Bits
 import Data.Monoid
 import Data.Maybe
+import qualified GHC.Exts as E
 import qualified Crypto.Cipher.AES as Priv
 import qualified Crypto.Cipher.DES as Priv
 import qualified Crypto.Cipher.Types as Priv
@@ -146,7 +147,7 @@ pdus = choice
   PdusReport p -> option 7 "report" p $ implicitTag 8 pdu
 
 defaultObjectIdentifier :: ObjectIdentifier
-defaultObjectIdentifier = ObjectIdentifier (Vector.fromList [1,3,6])
+defaultObjectIdentifier = ObjectIdentifier (E.fromList [1,3,6])
 
 defaultPdu :: Pdu
 defaultPdu = Pdu (RequestId 0) (ErrorStatus 0) (ErrorIndex 0) Vector.empty

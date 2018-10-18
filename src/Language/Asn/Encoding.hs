@@ -54,6 +54,7 @@ import Data.Word
 import Data.Int
 import Data.Bits
 import Data.Vector (Vector)
+import Data.Primitive (PrimArray,Prim)
 import GHC.Int (Int(..))
 import GHC.Integer.Logarithms (integerLog2#)
 import Data.Foldable hiding (null)
@@ -63,6 +64,7 @@ import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Builder as Builder
 import qualified Data.List as List
 import qualified Data.Vector as Vector
+import qualified Data.Primitive as PM
 import qualified Data.ByteString as ByteString
 
 -- Note that DER encoding is a subset of BER encoding. If you
@@ -349,15 +351,24 @@ integerBE i
 
 oidBE :: ObjectIdentifier -> LB.ByteString
 oidBE (ObjectIdentifier nums1)
-  | Vector.length nums1 > 2 =
-      let !n1 = Vector.unsafeIndex nums1 0
-          !n2 = Vector.unsafeIndex nums1 1
-          !nums2 = Vector.unsafeDrop 2 nums1
+  | sz > 2 =
+      let !n1 = PM.indexPrimArray nums1 0
+          !n2 = PM.indexPrimArray nums1 1
+          -- !nums2 = Vector.unsafeDrop 2 nums1
           !firstOctet = fromIntegral n1 * 40 + fromIntegral n2 :: Word8
-       in Builder.toLazyByteString (Builder.word8 firstOctet <> foldMap multiByteBase127Encoding nums2)
+       in Builder.toLazyByteString (Builder.word8 firstOctet <> foldMapPrimArrayFromTo 2 sz multiByteBase127Encoding nums1)
   | otherwise = error "oidBE: OID with less than 3 identifiers"
+  where
+  sz = PM.sizeofPrimArray nums1
 
-multiByteBase127Encoding :: Integer -> Builder
+foldMapPrimArrayFromTo :: forall a b. (Prim a, Monoid b) => Int -> Int -> (a -> b) -> PrimArray a -> b
+foldMapPrimArrayFromTo !start !end f !arr = go start where
+  go !i
+    | end > i = mappend (f (PM.indexPrimArray arr i)) (go (i+1))
+    | otherwise = mempty
+
+-- This function works fine on any integral type.
+multiByteBase127Encoding :: Word -> Builder
 multiByteBase127Encoding i0 =
   let (!i1,!byteVal) = quotRem i0 128
    in go i1 <> Builder.word8 (fromIntegral byteVal)

@@ -45,6 +45,7 @@ import Data.Int
 import Data.Functor.Identity (Identity(..))
 import Text.Printf (printf)
 import Debug.Trace
+import qualified GHC.Exts as E
 import qualified Data.Text.Encoding as TE
 import qualified Data.List as List
 import qualified Data.Vector as Vector
@@ -319,9 +320,9 @@ stepOidAll bs1 = case ByteString.uncons bs1 of
   Just (b,bs2) ->
     let (w1,w2) = quotRem b 40
         Identity nums = repeatUntilEmpty (Identity . stepOid 0) bs2
-     in Right (ObjectIdentifier (Vector.fromList $ fromIntegral w1 : fromIntegral w2 : nums))
+     in Right (ObjectIdentifier (E.fromList $ fromIntegral w1 : fromIntegral w2 : nums))
 
-stepOid :: Integer -> ByteString -> (Integer,ByteString)
+stepOid :: Word -> ByteString -> (Word,ByteString)
 stepOid !i bs1 = case ByteString.uncons bs1 of
   Nothing -> (i,bs1)
   Just (w,bs2) ->

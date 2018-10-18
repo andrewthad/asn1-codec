@@ -23,6 +23,7 @@ import Data.Semigroup (Semigroup)
 import Data.Word
 import Data.Int
 import Data.Bits
+import Data.Primitive (PrimArray)
 import Data.Vector (Vector)
 import GHC.Int (Int(..))
 import GHC.Integer.Logarithms (integerLog2#)
@@ -36,6 +37,7 @@ import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Builder as Builder
 import qualified Data.List as List
 import qualified Data.Vector as Vector
+import qualified GHC.Exts as E
 
 data AsnEncoding a
   = EncSequence [Field a]
@@ -72,19 +74,27 @@ instance Contravariant UniversalValue where
 newtype Subtypes a = Subtypes { getSubtypes :: [Subtype a] }
   deriving (Semigroup,Monoid)
 
-newtype ObjectIdentifier = ObjectIdentifier { getObjectIdentifier :: Vector Integer }
-  deriving (Eq,Ord,Show,Read,Generic)
+-- | Note: we deviate slightly from the actual definition of an object
+-- identifier. Technically, each number of an OID should be allowed to
+-- be an integer of unlimited size. However, we are intentionally unfaithful
+-- to this specification because in practice, there are no OIDs that use
+-- integers above a 32-bit word, so we just use the machine's native word
+-- size.
+newtype ObjectIdentifier = ObjectIdentifier
+  { getObjectIdentifier :: PrimArray Word
+  } deriving (Eq,Ord,Show,Generic)
 
 instance Hashable ObjectIdentifier where
-  hash (ObjectIdentifier v) = hash (Vector.toList v)
-  hashWithSalt s (ObjectIdentifier v) = hashWithSalt s (Vector.toList v)
+  hash (ObjectIdentifier v) = hash (E.toList v)
+  hashWithSalt s (ObjectIdentifier v) = hashWithSalt s (E.toList v)
 
-newtype ObjectIdentifierSuffix = ObjectIdentifierSuffix { getObjectIdentifierSuffix :: Vector Integer }
-  deriving (Eq,Ord,Show,Read,Generic)
+newtype ObjectIdentifierSuffix = ObjectIdentifierSuffix
+  { getObjectIdentifierSuffix :: PrimArray Word
+  } deriving (Eq,Ord,Show,Generic)
 
 instance Hashable ObjectIdentifierSuffix where
-  hash (ObjectIdentifierSuffix v) = hash (Vector.toList v)
-  hashWithSalt s (ObjectIdentifierSuffix v) = hashWithSalt s (Vector.toList v)
+  hash (ObjectIdentifierSuffix v) = hash (E.toList v)
+  hashWithSalt s (ObjectIdentifierSuffix v) = hashWithSalt s (E.toList v)
 
 data Subtype a
   = SubtypeSingleValue a -- This also acts as PermittedAlphabet

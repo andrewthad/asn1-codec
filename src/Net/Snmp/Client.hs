@@ -26,6 +26,7 @@ import Control.Concurrent
 import Debug.Trace
 import Text.Printf (printf)
 import Data.Bits
+import qualified Language.Asn.ObjectIdentifier as OID
 import qualified Data.Vector as Vector
 import qualified Data.IntMap as IntMap
 import qualified Network.Socket as NS
@@ -352,10 +353,7 @@ getBulkChildren' ctx maxRep oid1 = go Vector.empty oid1 where
           else go (prevPairs Vector.++ pairs) (fst (Vector.last pairs))
 
 oidIsPrefixOf :: ObjectIdentifier -> ObjectIdentifier -> Bool
-oidIsPrefixOf (ObjectIdentifier a) (ObjectIdentifier b) =
-  let lenA = Vector.length a in
-  (lenA <= Vector.length b) &&
-  (a == Vector.take lenA b)
+oidIsPrefixOf = OID.isPrefixOf
 
 -- There is not a mapMaybe for vector until 0.12.0.0
 multipleBindings :: Vector VarBind -> Vector (ObjectIdentifier,ObjectSyntax)
