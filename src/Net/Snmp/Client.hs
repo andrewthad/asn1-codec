@@ -3,41 +3,43 @@
 
 module Net.Snmp.Client where
 
-import Net.Snmp.Types
-import Language.Asn.Types
-import Data.Coerce
-import Control.Monad.STM
-import Control.Concurrent.STM.TVar
-import Control.Concurrent.STM.TMVar
-import Data.Map (Map)
-import Data.Maybe
-import Data.Word
-import Data.Vector (Vector)
-import Data.IntMap (IntMap)
-import Control.Monad
+import Control.Applicative
+import Control.Concurrent
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan
-import Data.ByteString (ByteString)
+import Control.Concurrent.STM.TMVar
+import Control.Concurrent.STM.TVar
 import Control.Exception (throwIO,Exception)
-import Control.Applicative
+import Control.Monad
+import Control.Monad.STM
+import Data.Bits
+import Data.ByteString (ByteString)
+import Data.Coerce
 import Data.Functor
 import Data.Int
-import Control.Concurrent
+import Data.IntMap (IntMap)
+import Data.Map (Map)
+import Data.Maybe
+import Data.Vector (Vector)
+import Data.Word
 import Debug.Trace
+import Language.Asn.Types
+import Net.Snmp.Types
+import Net.Types (IPv4)
 import Text.Printf (printf)
-import Data.Bits
-import qualified Language.Asn.ObjectIdentifier as OID
-import qualified Data.Vector as Vector
-import qualified Data.IntMap as IntMap
-import qualified Network.Socket as NS
 import qualified Data.ByteString as ByteString
-import qualified Network.Socket.ByteString as NSB
-import qualified Net.Snmp.Decoding as SnmpDecoding
-import qualified Net.Snmp.Encoding as SnmpEncoding
+import qualified Data.ByteString.Lazy as LB
+import qualified Data.IntMap as IntMap
+import qualified Data.Map as Map
+import qualified Data.Vector as Vector
 import qualified Language.Asn.Decoding as AsnDecoding
 import qualified Language.Asn.Encoding as AsnEncoding
-import qualified Data.Map as Map
-import qualified Data.ByteString.Lazy as LB
+import qualified Language.Asn.ObjectIdentifier as OID
+import qualified Net.IPv4 as IPv4
+import qualified Net.Snmp.Decoding as SnmpDecoding
+import qualified Net.Snmp.Encoding as SnmpEncoding
+import qualified Network.Socket as NS
+import qualified Network.Socket.ByteString as NSB
 import qualified System.Posix.Types
 
 data Session = Session
@@ -57,7 +59,7 @@ data Config = Config
   } deriving (Show,Eq)
 
 data Destination = Destination
-  { destinationHost :: !(Word8,Word8,Word8,Word8)
+  { destinationHost :: !IPv4
   , destinationPort :: !Word16
   } deriving (Show,Eq)
 
@@ -135,7 +137,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
             then do
               when inDebugMode $ putStrLn "Sending:"
               when inDebugMode $ putStrLn (hexByteStringInternal bs)
-              bytesSentLen <- NSB.sendTo sock bs (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
+              bytesSentLen <- NSB.sendTo sock bs (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress (IPv4.toOctets ip)))
               if bytesSentLen /= bsLen
                 then return $ Left $ SnmpExceptionNotAllBytesSent bytesSentLen bsLen
                 else do
@@ -220,7 +222,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
               when inDebugMode $ putStrLn "Sending:"
               when inDebugMode $ putStrLn (hexByteStringInternal bsSent)
               let bsLen = ByteString.length bsSent
-              bytesSentLen <- NSB.sendTo sock bsSent (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress ip))
+              bytesSentLen <- NSB.sendTo sock bsSent (NS.SockAddrInet (fromIntegral port) (NS.tupleToHostAddress (IPv4.toOctets ip)))
               if bytesSentLen /= bsLen
                 then return $ Left $ SnmpExceptionNotAllBytesSent bytesSentLen bsLen
                 else do
@@ -422,7 +424,7 @@ nextRequestId requestIdVar = atomically $ do
   return (RequestId i3)
 
 mySockFd :: NS.Socket -> System.Posix.Types.Fd
-mySockFd (NS.MkSocket n _ _ _ _) = System.Posix.Types.Fd n
+mySockFd s = System.Posix.Types.Fd (NS.fdSocket s)
 
 hexByteStringInternal :: ByteString -> String
 hexByteStringInternal = ByteString.foldr (\w xs -> printf "%02X" w ++ xs) []

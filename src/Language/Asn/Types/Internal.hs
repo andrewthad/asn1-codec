@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -13,30 +14,24 @@
 
 module Language.Asn.Types.Internal where
 
-import Prelude hiding (sequence,null)
-import Data.String
 import Data.ByteString (ByteString)
-import Data.ByteString.Builder (Builder)
-import Data.Text (Text)
-import Data.Monoid
-import Data.Semigroup (Semigroup)
-import Data.Word
-import Data.Int
-import Data.Bits
-import Data.Primitive (PrimArray)
-import Data.Vector (Vector)
-import GHC.Int (Int(..))
-import GHC.Integer.Logarithms (integerLog2#)
-import Data.Foldable
-import Data.Hashable (Hashable(..))
-import GHC.Generics (Generic)
 import Data.Functor.Contravariant (Contravariant(..))
-import qualified Data.Text.Encoding as TE
-import qualified Text.PrettyPrint as PP
+import Data.Hashable (Hashable(..))
+#if MIN_VERSION_base(4,12,0)
+import Data.Monoid hiding (Ap)
+#else
+import Data.Monoid
+#endif
+
+import Data.Primitive (PrimArray)
+import Data.Semigroup (Semigroup)
+import Data.String
+import Data.Text (Text)
+import Data.Word
+import GHC.Generics (Generic)
+import GHC.Int (Int(..))
+import Prelude hiding (sequence,null)
 import qualified Data.ByteString.Lazy as LB
-import qualified Data.ByteString.Builder as Builder
-import qualified Data.List as List
-import qualified Data.Vector as Vector
 import qualified GHC.Exts as E
 
 data AsnEncoding a
