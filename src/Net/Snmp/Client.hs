@@ -1,7 +1,25 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Net.Snmp.Client where
+module Net.Snmp.Client
+  ( Session(..)
+  , Config(..)
+  , Destination(..)
+  , Credentials(..)
+  , CredentialsV2(..)
+  , CredentialsV3(..)
+  , Context(..)
+  , PerHostV3(..)
+  , SnmpException(..)
+  , openSession
+  , closeSession
+  , get
+  , get'
+  , getBulkStep
+  , getBulkStep'
+  , getBulkChildren
+  , getBulkChildren'
+  ) where
 
 import Control.Applicative
 import Control.Concurrent
