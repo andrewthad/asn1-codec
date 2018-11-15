@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -45,25 +46,23 @@ module Language.Asn.Encoding
 
 import Prelude hiding (sequence,null)
 import Language.Asn.Types.Internal
-import Data.String
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder (Builder)
 import Data.Text (Text)
+#if !MIN_VERSION_base(4,11,0)
 import Data.Monoid
+#endif
 import Data.Word
 import Data.Int
 import Data.Bits
-import Data.Vector (Vector)
 import Data.Primitive (PrimArray,Prim)
 import GHC.Int (Int(..))
-import GHC.Integer.Logarithms (integerLog2#)
 import Data.Foldable hiding (null)
 import qualified Data.Text.Encoding as TE
 import qualified Text.PrettyPrint as PP
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Builder as Builder
 import qualified Data.List as List
-import qualified Data.Vector as Vector
 import qualified Data.Primitive as PM
 import qualified Data.ByteString as ByteString
 
@@ -377,7 +376,3 @@ multiByteBase127Encoding i0 =
     then mempty
     else let (!n2,!byteVal) = quotRem n1 128
           in go n2 <> Builder.word8 (128 .|. fromIntegral byteVal)
-
-integerLog2 :: Integer -> Int
-integerLog2 i = I# (integerLog2# i)
-

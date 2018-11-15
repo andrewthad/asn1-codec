@@ -44,11 +44,9 @@ import Data.Word
 import Data.Int
 import Data.Functor.Identity (Identity(..))
 import Text.Printf (printf)
-import Debug.Trace
 import qualified GHC.Exts as E
 import qualified Data.Text.Encoding as TE
 import qualified Data.List as List
-import qualified Data.Vector as Vector
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Unsafe as BSU
 

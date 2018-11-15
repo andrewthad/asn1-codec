@@ -12,10 +12,17 @@ category:            web
 build-type:          Simple
 cabal-version:       >=1.10
 
+flag TestNetwork
+  description:
+    There is a test network that is buildable with this package.
+    .
+    Enable this flag if you would look to play around with it.
+  default: False
+  manual: True
+
 library
   hs-source-dirs: src
   exposed-modules:
-    TestNetwork
     Language.Asn.Encoding
     Language.Asn.Decoding
     Language.Asn.ObjectIdentifier
@@ -25,21 +32,24 @@ library
     Net.Snmp.Encoding
     Net.Snmp.Decoding
     Net.Snmp.Client
+  if flag(TestNetwork)
+    exposed-modules:
+      TestNetwork
   build-depends:
-      base >= 4.9 && < 5
-    , integer-gmp
+      base >= 4.9.1.0 && < 5
     , bytestring >= 0.10
-    , contravariant >= 1.4
-    , vector >= 0.11
-    , primitive >= 0.6.4
-    , pretty
-    , text >= 1.2
-    , network >= 2.6
-    , stm
     , containers
-    , hashable >= 1.2
+    , contravariant >= 1.4
     , cryptonite
+    , hashable >= 1.2
+    , ip >= 1.0.0 && < 2.0.0 
     , memory
+    , network >= 2.6
+    , pretty
+    , primitive >= 0.6.4
+    , stm
+    , text >= 1.2
+    , vector >= 0.11
   ghc-options: -O2
   default-language:    Haskell2010
 
@@ -49,15 +59,16 @@ test-suite asn1-records-test
   main-is: Spec.hs
   build-depends:
       base
-    , asn1-codec
-    , test-framework
-    , text
-    , bytestring
     , HUnit
-    , test-framework-hunit
     , aeson
-    , directory
+    , asn1-codec
     , base16-bytestring
+    , bytestring
+    , directory
+    , ip
+    , test-framework
+    , test-framework-hunit
+    , text
     , vector
   other-modules:
     Internal

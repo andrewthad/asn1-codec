@@ -3,36 +3,37 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-import Prelude hiding (sequence)
-import Language.Asn.Types
-import qualified Language.Asn.Encoding as Encoding
-import qualified Language.Asn.Decoding as Decoding
-import Net.Snmp.Client
+import Control.Monad
+import Data.Aeson.TH (deriveJSON)
+import Data.ByteString (ByteString)
+import Data.Char (isSpace)
+import Data.Text (Text)
 import Internal (myOptions)
+import Language.Asn.Types
+import Net.Snmp.Client
+import Net.Snmp.Types
+import Numeric (readHex)
+import Prelude hiding (sequence)
+import System.Directory (getDirectoryContents)
 import Test.Framework
 import Test.Framework.Providers.HUnit
 import Test.HUnit hiding (Test)
-import Data.Text (Text)
-import Data.Aeson.TH (deriveJSON)
-import System.Directory (getDirectoryContents)
 import Text.Printf (printf)
-import Data.Char (isSpace)
-import Net.Snmp.Types
-import Data.ByteString (ByteString)
-import Numeric (readHex)
-import Control.Monad
-import qualified GHC.Exts as E
-import qualified Data.Vector as Vector
-import qualified Data.Text as Text
-import qualified Data.List as List
 import qualified Data.Aeson as Aeson
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as Base16
+import qualified Data.ByteString.Char8 as BC8
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.Char8 as LBC8
-import qualified Data.ByteString.Char8 as BC8
-import qualified Data.ByteString as BS
-import qualified Net.Snmp.Encoding as SnmpEncoding
+import qualified Data.List as List
+import qualified Data.Text as Text
+import qualified Data.Vector as Vector
+import qualified GHC.Exts as E
+import qualified Language.Asn.Decoding as Decoding
+import qualified Language.Asn.Encoding as Encoding
+import qualified Net.IPv4 as IPv4
 import qualified Net.Snmp.Decoding as SnmpDecoding
-import qualified Data.ByteString.Base16 as Base16
+import qualified Net.Snmp.Encoding as SnmpEncoding
 
 main :: IO ()
 main = do
@@ -78,7 +79,7 @@ main = do
 testSnmpClient :: Credentials -> IO ()
 testSnmpClient creds = do
   s <- openSession (Config 1 2000000 1)
-  let ctx = Context s (Destination (127,0,0,1) 161) creds
+  let ctx = Context s (Destination (IPv4.ipv4 127 0 0 1) 161) creds
   _ <- get ctx (ObjectIdentifier (E.fromList [1,3,6,1,2,1,1,1,0]))
   closeSession s
 
@@ -242,4 +243,3 @@ $(deriveJSON (myOptions "ScopedPduData") ''ScopedPduData)
 $(deriveJSON (myOptions "Usm") ''Usm)
 $(deriveJSON (myOptions "MessageV2") ''MessageV2)
 $(deriveJSON (myOptions "MessageV3") ''MessageV3)
-
