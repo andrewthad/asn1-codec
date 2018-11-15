@@ -123,7 +123,7 @@ pdus = choice
   , PdusResponse <$> option "response" (tag ContextSpecific 2 Implicit pdu)
   , PdusSetRequest <$> option "set-request" (tag ContextSpecific 3 Implicit pdu)
   , PdusInformRequest <$> option "inform-request" (tag ContextSpecific 6 Implicit pdu)
-  , PdusSnmpTrap <$> option "snmpV2-trap" (tag ContextSpecific 7 Implicit trapPdu)
+  , PdusSnmpTrap <$> option "snmpV2-trap" (tag ContextSpecific 4 Implicit trapPdu)
   , PdusReport <$> option "report" (tag ContextSpecific 8 Implicit pdu)
   ]
 

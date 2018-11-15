@@ -146,7 +146,7 @@ pdus = choice
   PdusResponse p -> option 3 "response" p $ implicitTag 2 pdu
   PdusSetRequest p -> option 4 "set-request" p $ implicitTag 3 pdu
   PdusInformRequest p -> option 5 "inform-request" p $ implicitTag 6 pdu
-  PdusSnmpTrap p -> option 6 "snmpV2-trap" p $ implicitTag 7 trapPdu
+  PdusSnmpTrap p -> option 6 "snmpV2-trap" p $ implicitTag 4 trapPdu
   PdusReport p -> option 7 "report" p $ implicitTag 8 pdu
 
 defaultObjectIdentifier :: ObjectIdentifier
