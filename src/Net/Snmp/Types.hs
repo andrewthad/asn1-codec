@@ -55,7 +55,7 @@ data Pdus
   | PdusResponse !Pdu
   | PdusSetRequest !Pdu
   | PdusInformRequest !Pdu
-  | PdusSnmpTrap !Pdu
+  | PdusSnmpTrap !TrapPdu
   | PdusReport !Pdu
   deriving (Eq,Show)
 
@@ -172,7 +172,7 @@ data TrapPdu = TrapPdu
   , trapPduSpecificTrap :: !Integer
   , trapPduTimeStamp :: !Integer
   , trapPduVariableBindings :: [VarBind]
-  }
+  } deriving (Eq,Show)
 
 data GenericTrap
   = GenericTrapColdStart
@@ -182,4 +182,5 @@ data GenericTrap
   | GenericTrapAuthenticationFailure
   | GenericTrapEgpNeighborLoss
   | GenericTrapEnterpriseSpecific
+  deriving (Eq,Show)
 

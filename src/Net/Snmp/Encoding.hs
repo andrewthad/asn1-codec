@@ -118,6 +118,9 @@ pdu = sequence
   , required "variable-bindings" pduVariableBindings (sequenceOf varBind)
   ]
 
+trapPdu :: AsnEncoding TrapPdu
+trapPdu = error "Net.Snmp.Encoding.trapPdu: not yet implemented"
+
 bulkPdu :: AsnEncoding BulkPdu
 bulkPdu = sequence
   [ required "request-id" bulkPduRequestId (coerce int)
@@ -134,7 +137,7 @@ pdus = choice
   , PdusResponse defaultPdu
   , PdusSetRequest defaultPdu
   , PdusInformRequest defaultPdu
-  , PdusSnmpTrap defaultPdu
+  , PdusSnmpTrap (TrapPdu defaultObjectIdentifier 0 GenericTrapColdStart 0 0 [])
   , PdusReport defaultPdu
   ] $ \x -> case x of
   PdusGetRequest p -> option 0 "get-request" p $ implicitTag 0 pdu
@@ -143,7 +146,7 @@ pdus = choice
   PdusResponse p -> option 3 "response" p $ implicitTag 2 pdu
   PdusSetRequest p -> option 4 "set-request" p $ implicitTag 3 pdu
   PdusInformRequest p -> option 5 "inform-request" p $ implicitTag 6 pdu
-  PdusSnmpTrap p -> option 6 "snmpV2-trap" p $ implicitTag 7 pdu
+  PdusSnmpTrap p -> option 6 "snmpV2-trap" p $ implicitTag 7 trapPdu
   PdusReport p -> option 7 "report" p $ implicitTag 8 pdu
 
 defaultObjectIdentifier :: ObjectIdentifier
