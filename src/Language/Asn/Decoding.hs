@@ -51,7 +51,7 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Unsafe as BSU
 
 ber :: AsnDecoding a -> ByteString -> Either String a
-ber d bs = requireNoLeftovers =<< decodeBerInternal "" d Nothing bs
+ber d bs = requireNoLeftovers "" =<< decodeBerInternal "" d Nothing bs
 
 sequence :: FieldDecoding a -> AsnDecoding a
 sequence = AsnDecodingSequence
@@ -158,11 +158,11 @@ decodeBerInternal ctx x overrideTag bs1 = case x of
     Implicit -> decodeBerInternal ctx nextDecoding (Just $ fromMaybe newTag overrideTag) bs1
     Explicit -> do
       (bsContent,bsRemainder) <- takeTagAndLength Constructed newTag
-      a <- requireNoLeftovers =<< decodeBerInternal ctx nextDecoding Nothing bsContent
+      a <- requireNoLeftovers ctx =<< decodeBerInternal ctx nextDecoding Nothing bsContent
       return (a,bsRemainder)
   AsnDecodingSequence (FieldDecoding fieldDecoding) -> do
     (bsContent,bsRemainder) <- takeTagAndLength Constructed sequenceTag
-    a <- requireNoLeftovers =<< getDecodePart (runAp (decodeField ctx) fieldDecoding) bsContent
+    a <- requireNoLeftovers ctx =<< getDecodePart (runAp (decodeField ctx) fieldDecoding) bsContent
     return (a,bsRemainder)
   AsnDecodingSequenceOf f nextDecoding -> do
     (bsContent,bsRemainder) <- takeTagAndLength Constructed sequenceTag
@@ -207,7 +207,7 @@ decodeBerInternal ctx x overrideTag bs1 = case x of
   takeTagAndLength :: Construction -> Tag -> Either String (ByteString,ByteString)
   takeTagAndLength construction t1 = do
     let tagToUse = fromMaybe t1 overrideTag
-    bs2 <- expectTag construction tagToUse bs1
+    bs2 <- expectTag ctx construction tagToUse bs1
     (len,bs3) <- takeLength bs2
     splitOrFail len bs3
 
@@ -259,23 +259,25 @@ decipherTagNumber w bs = do
     else error "decipherTagNumber: handle tags greater than 30"
 
 
-requireNoLeftovers :: (a,ByteString) -> Either String a
-requireNoLeftovers (a,bs) = if ByteString.null bs then Right a else Left "expected not to have leftovers, but there were leftovers"
+requireNoLeftovers :: String -> (a,ByteString) -> Either String a
+requireNoLeftovers ctx (a,bs) = if ByteString.null bs then Right a else Left ("[" ++ ctx ++ "]: expected not to have leftovers, but there were leftovers")
 
-expectTag :: Construction -> Tag -> ByteString -> Either String ByteString
-expectTag construction (Tag tc tn) bs = case ByteString.uncons bs of
-  Nothing -> Left "expected a byte for the Tag but the ByteString was empty"
+expectTag :: String -> Construction -> Tag -> ByteString -> Either String ByteString
+expectTag ctx construction (Tag tc tn) bs = case ByteString.uncons bs of
+  Nothing -> Left ("[" ++ ctx ++ "]: expected a byte for the Tag but the ByteString was empty")
   Just (b,bsNext) -> do
     let expectedTagBits = tagClassBit tc
         actualTagBits = b .&. 192
     when (actualTagBits /= expectedTagBits)
-      $ Left $ "while parsing the tag, the tag class bits did not match: "
+      $ Left $ "["
+            ++ ctx
+            ++ "]: while parsing the tag, the tag class bits did not match: "
             ++ "found " ++ printf "%08b" actualTagBits ++ " but expected "
             ++ printf "%08b" expectedTagBits ++ " (" ++ show tc ++ ")"
     when (b .&. 32 /= constructionBit construction) $ Left "while parsing the tag, the construction bit did not match"
     if tn < 31
       then do
-        when (b .&. 31 /= fromIntegral tn) $ Left "while parsing the tag, the tag number did not match what was expected"
+        when (b .&. 31 /= fromIntegral tn) $ Left ("[" ++ ctx ++ "]: while parsing the tag, the tag number did not match what was expected")
         Right bsNext
       else error "expectTag: handle tag numbers higher than 30"
 
