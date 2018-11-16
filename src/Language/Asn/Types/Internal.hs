@@ -96,7 +96,7 @@ instance FromJSONKey ObjectIdentifier where
 
 oidJsonParser :: Text -> AE.Parser ObjectIdentifier
 oidJsonParser t = case fmap (ObjectIdentifier . E.fromList) (mapM parseWord (T.splitOn (T.singleton '.') t)) of
-  Nothing -> mempty
+  Nothing -> fail ("could not recognize " ++ T.unpack t ++ " as an OID")
   Just x -> return x
 
 parseWord :: Text -> Maybe Word
