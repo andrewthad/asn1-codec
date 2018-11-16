@@ -37,7 +37,7 @@ trapPdu = sequence $ TrapPdu
       )
   <*> required "generic-trap" genericTrap
   <*> required "specific-trap" integer
-  <*> required "time-stamp" integer
+  <*> required "time-stamp" (tag Application 3 Implicit integer)
   <*> required "variable-bindings" (sequenceOf varBind)
 
 genericTrap :: AsnDecoding GenericTrap
