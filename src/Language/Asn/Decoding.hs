@@ -51,7 +51,7 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Unsafe as BSU
 
 ber :: AsnDecoding a -> ByteString -> Either String a
-ber d bs = requireNoLeftovers =<< decodeBerInternal d Nothing bs
+ber d bs = requireNoLeftovers =<< decodeBerInternal "" d Nothing bs
 
 sequence :: FieldDecoding a -> AsnDecoding a
 sequence = AsnDecodingSequence
@@ -140,36 +140,36 @@ integerRanged lo hi = AsnDecodingUniversal
 mapFailable :: (a -> Either String b) -> AsnDecoding a -> AsnDecoding b
 mapFailable f d = AsnDecodingConversion d f
 
-repeatUntilEmpty :: Monad m => (ByteString -> m (a,ByteString)) -> ByteString -> m [a]
-repeatUntilEmpty f = go where
-  go bs1 = do
-    (a,bs2) <- f bs1
+repeatUntilEmpty :: Monad m => (Int -> ByteString -> m (a,ByteString)) -> ByteString -> m [a]
+repeatUntilEmpty f = go 0 where
+  go !ix bs1 = do
+    (a,bs2) <- f ix bs1
     if ByteString.null bs2
       then return [a]
-      else fmap (a:) (go bs2)
+      else fmap (a:) (go (ix + 1) bs2)
 
-decodeBerInternal :: AsnDecoding a -> Maybe Tag -> ByteString -> Either String (a,ByteString)
-decodeBerInternal x overrideTag bs1 = case x of
+decodeBerInternal :: String -> AsnDecoding a -> Maybe Tag -> ByteString -> Either String (a,ByteString)
+decodeBerInternal ctx x overrideTag bs1 = case x of
   AsnDecodingUniversal u -> do
     (bsContent,bsRemainder) <- takeTagAndLength Primitive (Tag Universal (universeDecodingTagNumber u))
     a <- decodeUniversal u bsContent
     return (a,bsRemainder)
   AsnDecodingRetag (TagAndExplicitness newTag expl) nextDecoding -> case expl of
-    Implicit -> decodeBerInternal nextDecoding (Just $ fromMaybe newTag overrideTag) bs1
+    Implicit -> decodeBerInternal ctx nextDecoding (Just $ fromMaybe newTag overrideTag) bs1
     Explicit -> do
       (bsContent,bsRemainder) <- takeTagAndLength Constructed newTag
-      a <- requireNoLeftovers =<< decodeBerInternal nextDecoding Nothing bsContent
+      a <- requireNoLeftovers =<< decodeBerInternal ctx nextDecoding Nothing bsContent
       return (a,bsRemainder)
   AsnDecodingSequence (FieldDecoding fieldDecoding) -> do
     (bsContent,bsRemainder) <- takeTagAndLength Constructed sequenceTag
-    a <- requireNoLeftovers =<< getDecodePart (runAp decodeField fieldDecoding) bsContent
+    a <- requireNoLeftovers =<< getDecodePart (runAp (decodeField ctx) fieldDecoding) bsContent
     return (a,bsRemainder)
   AsnDecodingSequenceOf f nextDecoding -> do
     (bsContent,bsRemainder) <- takeTagAndLength Constructed sequenceTag
-    cs <- repeatUntilEmpty (decodeBerInternal nextDecoding Nothing) bsContent
+    cs <- repeatUntilEmpty (\ix -> decodeBerInternal (ctx ++ "." ++ show ix) nextDecoding Nothing) bsContent
     return (f cs,bsRemainder)
   AsnDecodingConversion nextDecoding conv -> do
-    (b,bs2) <- decodeBerInternal nextDecoding overrideTag bs1
+    (b,bs2) <- decodeBerInternal ctx nextDecoding overrideTag bs1
     a <- conv b
     return (a,bs2)
   -- Note: overrideTag is currently ignored in this case. Per
@@ -200,7 +200,7 @@ decodeBerInternal x overrideTag bs1 = case x of
           , "]"
           ]
         Just (_,Wrapper chosenDecoder conv2) -> do
-          (c,bs3) <- decodeBerInternal chosenDecoder Nothing bs1
+          (c,bs3) <- decodeBerInternal ctx chosenDecoder Nothing bs1
           r <- conv2 c
           Right (r,bs3)
   where
@@ -228,14 +228,14 @@ nextExpectedTags x = case x of
   AsnDecodingConversion nextDecoding conv ->
     map (\((t,c),Wrapper theDec theConv) -> ((t,c),Wrapper theDec (theConv >=> conv))) (nextExpectedTags nextDecoding)
 
-decodeField :: FieldDecodingPart a -> DecodePart a
-decodeField x = case x of
-  FieldDecodingRequired _ d -> DecodePart (decodeBerInternal d Nothing)
-  FieldDecodingOptional _ d conv1 -> handlePossiblyMissingField d conv1
-  FieldDecodingDefault _ d a _ -> handlePossiblyMissingField d (fromMaybe a)
+decodeField :: String -> FieldDecodingPart a -> DecodePart a
+decodeField ctx x = case x of
+  FieldDecodingRequired (FieldName name) d -> DecodePart (decodeBerInternal (ctx ++ "." ++ name) d Nothing)
+  FieldDecodingOptional _ d conv1 -> handlePossiblyMissingField ctx d conv1
+  FieldDecodingDefault _ d a _ -> handlePossiblyMissingField ctx d (fromMaybe a)
 
-handlePossiblyMissingField :: AsnDecoding b -> (Maybe b -> a) -> DecodePart a
-handlePossiblyMissingField d conv1 = DecodePart $ \bs1 -> case ByteString.uncons bs1 of
+handlePossiblyMissingField :: String -> AsnDecoding b -> (Maybe b -> a) -> DecodePart a
+handlePossiblyMissingField ctx d conv1 = DecodePart $ \bs1 -> case ByteString.uncons bs1 of
   Nothing -> Right (conv1 Nothing, bs1)
   Just (b,bs2) -> do
     let possibilities = nextExpectedTags d
@@ -246,7 +246,7 @@ handlePossiblyMissingField d conv1 = DecodePart $ \bs1 -> case ByteString.uncons
     case mmatched of
       Nothing -> Right (conv1 Nothing, bs1)
       Just (_,Wrapper chosenDecoder conv2) -> do
-        (c,bs3) <- decodeBerInternal chosenDecoder Nothing bs1
+        (c,bs3) <- decodeBerInternal ctx chosenDecoder Nothing bs1
         r <- conv2 c
         Right (conv1 (Just r),bs3)
 
@@ -317,7 +317,7 @@ stepOidAll bs1 = case ByteString.uncons bs1 of
   Nothing -> Left "while decoding OID, found no bytes, the OID should have at least one octet"
   Just (b,bs2) ->
     let (w1,w2) = quotRem b 40
-        Identity nums = repeatUntilEmpty (Identity . stepOid 0) bs2
+        Identity nums = repeatUntilEmpty (\_ theBytes -> Identity (stepOid 0 theBytes)) bs2
      in Right (ObjectIdentifier (E.fromList $ fromIntegral w1 : fromIntegral w2 : nums))
 
 stepOid :: Word -> ByteString -> (Word,ByteString)
