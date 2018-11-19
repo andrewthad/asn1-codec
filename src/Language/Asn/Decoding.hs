@@ -166,8 +166,11 @@ decodeBerInternal ctx x overrideTag bs1 = case x of
     return (a,bsRemainder)
   AsnDecodingSequenceOf f nextDecoding -> do
     (bsContent,bsRemainder) <- takeTagAndLength Constructed sequenceTag
-    cs <- repeatUntilEmpty (\ix -> decodeBerInternal (ctx ++ "." ++ show ix) nextDecoding Nothing) bsContent
-    return (f cs,bsRemainder)
+    if ByteString.null bsContent
+      then return (f [], ByteString.empty)
+      else do
+        cs <- repeatUntilEmpty (\ix -> decodeBerInternal (ctx ++ "." ++ show ix) nextDecoding Nothing) bsContent
+        return (f cs,bsRemainder)
   AsnDecodingConversion nextDecoding conv -> do
     (b,bs2) <- decodeBerInternal ctx nextDecoding overrideTag bs1
     a <- conv b
