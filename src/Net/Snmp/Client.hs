@@ -188,6 +188,15 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
       writeChan (sessionSockets session) sock
       return (e >>= fromPdu)
     CredentialsConstructV3 (CredentialsV3 crypto contextName user) -> do
+      let passwordToKeyCached typ password eng = do
+            keyCache <- readIORef (sessionKeyCache session)
+            let triple = (typ,password,eng)
+            case Map.lookup triple keyCache of
+              Nothing -> do
+                let key = SnmpEncoding.passwordToKey typ password eng
+                writeIORef (sessionKeyCache session) (Map.insert triple key keyCache)
+                return key
+              Just key -> return key
       -- setting the reportable flags is very important
       -- for AuthPriv
       let flags = cryptoFlags crypto .|. 0x04
@@ -197,35 +206,31 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
             Just (AuthParameters typ password) -> do
               keyCache <- readIORef (sessionKeyCache session)
               let triple = (typ,password,perHostV3AuthoritativeEngineId phv3)
-              key <- case Map.lookup triple keyCache of
-                Nothing -> do
-                  let key = SnmpEncoding.passwordToKey typ password (perHostV3AuthoritativeEngineId phv3)
-                  writeIORef (sessionKeyCache session) (Map.insert triple key keyCache)
-                  return key
-                Just key -> return key
+              key <- passwordToKeyCached typ password (perHostV3AuthoritativeEngineId phv3)
               let serializationWithoutAuth = snd (makeBs (ByteString.replicate 12 0x00) reqId privPair phv3)
               pure (SnmpEncoding.mkSign typ key serializationWithoutAuth)
-          mkPrivParams :: AesSalt -> RequestId -> PerHostV3 -> (ByteString,ScopedPduData)
+          mkPrivParams :: AesSalt -> RequestId -> PerHostV3 -> IO (ByteString,ScopedPduData)
           mkPrivParams theSalt reqId phv3 = case crypto of
-            AuthPriv (AuthParameters authType authPass) (PrivParameters privType privPass) -> case privType of
-              PrivTypeAes ->
-                let (encrypted,actualSaltBs) = SnmpEncoding.aesEncrypt
-                      key
-                      (perHostV3ReceiverBoots phv3)
-                      (perHostV3ReceiverTime phv3)
-                      theSalt
-                      (LB.toStrict (AsnEncoding.der SnmpEncoding.scopedPdu spdu))
-                 in (actualSaltBs,ScopedPduDataEncrypted encrypted)
-              PrivTypeDes ->
-                let (encrypted,actualSaltBs) = SnmpEncoding.desEncrypt
-                      key
-                      (perHostV3ReceiverBoots phv3)
-                      (fromIntegral (getAesSalt theSalt))
-                      -- (perHostV3ReceiverTime phv3)
-                      (LB.toStrict (AsnEncoding.der SnmpEncoding.scopedPdu spdu))
-                 in (actualSaltBs,ScopedPduDataEncrypted encrypted)
-              where key = SnmpEncoding.passwordToKey authType privPass (perHostV3AuthoritativeEngineId phv3)
-            _ -> (ByteString.empty,ScopedPduDataPlaintext spdu)
+            AuthPriv (AuthParameters authType authPass) (PrivParameters privType privPass) -> do
+              key <- passwordToKeyCached authType privPass (perHostV3AuthoritativeEngineId phv3)
+              case privType of
+                PrivTypeAes ->
+                  let (encrypted,actualSaltBs) = SnmpEncoding.aesEncrypt
+                        key
+                        (perHostV3ReceiverBoots phv3)
+                        (perHostV3ReceiverTime phv3)
+                        theSalt
+                        (LB.toStrict (AsnEncoding.der SnmpEncoding.scopedPdu spdu))
+                   in pure (actualSaltBs,ScopedPduDataEncrypted encrypted)
+                PrivTypeDes ->
+                  let (encrypted,actualSaltBs) = SnmpEncoding.desEncrypt
+                        key
+                        (perHostV3ReceiverBoots phv3)
+                        (fromIntegral (getAesSalt theSalt))
+                        -- (perHostV3ReceiverTime phv3)
+                        (LB.toStrict (AsnEncoding.der SnmpEncoding.scopedPdu spdu))
+                   in pure (actualSaltBs,ScopedPduDataEncrypted encrypted)
+            _ -> pure (ByteString.empty,ScopedPduDataPlaintext spdu)
             where spdu = ScopedPdu (perHostV3AuthoritativeEngineId phv3) contextName (pdusFromRequestId reqId)
           makeBs :: ByteString -> RequestId -> (ByteString,ScopedPduData) -> PerHostV3 -> (MessageV3,ByteString)
           makeBs activeAuthParams reqId (activePrivParams,spdud) (PerHostV3 authoritativeEngineId receiverTime boots) =
@@ -237,7 +242,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
              in (myMsg, LB.toStrict $ AsnEncoding.der SnmpEncoding.messageV3 $ myMsg)
           fullMakeBs :: AesSalt -> RequestId -> PerHostV3 -> IO (MessageV3, ByteString)
           fullMakeBs theSalt reqId phv3 = do
-            let privPair = mkPrivParams theSalt reqId phv3
+            privPair <- mkPrivParams theSalt reqId phv3
             authParams <- mkAuthParams reqId phv3 privPair
             return (makeBs authParams reqId privPair phv3)
           go1 :: Int -> RequestId -> (MessageV3,ByteString) -> Bool -> IO (Either SnmpException Pdu)
@@ -279,7 +284,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                       when inDebugMode $ putStrLn $ hexByteStringInternal $ reencoded
                                       when (reencoded /= bsRecv) $ do
                                         when inDebugMode $ putStrLn "NOT THE SAME"
-                                      let key = SnmpEncoding.passwordToKey typ password (usmAuthoritativeEngineId (messageV3SecurityParameters msg))
+                                      key <- passwordToKeyCached typ password (usmAuthoritativeEngineId (messageV3SecurityParameters msg))
                                       case SnmpEncoding.checkSign typ key msg of
                                         Nothing -> return ()
                                         Just (expected,actual) -> do
@@ -316,8 +321,8 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                     ScopedPduDataEncrypted encrypted -> case crypto of
                                       AuthPriv (AuthParameters authType _) (PrivParameters privType privPass) -> do
                                         let usm = messageV3SecurityParameters msg
-                                            key = SnmpEncoding.passwordToKey authType privPass (usmAuthoritativeEngineId usm)
-                                            mdecrypted = case privType of
+                                        key <- passwordToKeyCached authType privPass (usmAuthoritativeEngineId usm)
+                                        let mdecrypted = case privType of
                                               PrivTypeDes -> SnmpEncoding.desDecrypt key (usmPrivacyParameters usm) encrypted
                                               PrivTypeAes -> SnmpEncoding.aesDecrypt key (usmPrivacyParameters usm) (usmAuthoritativeEngineBoots usm) (usmAuthoritativeEngineTime usm) encrypted
                                         case mdecrypted of
