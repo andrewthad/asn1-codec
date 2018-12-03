@@ -34,6 +34,7 @@ import Data.Bits
 import Data.ByteString (ByteString)
 import Data.Coerce
 import Data.Functor
+import Data.IORef (IORef,readIORef,writeIORef,newIORef)
 import Data.Int
 import Data.IntMap (IntMap)
 import Data.Map (Map)
@@ -68,6 +69,7 @@ data Session = Session
   , sessionAesSalt :: !(TVar AesSalt)
   , sessionTimeoutMicroseconds :: !Int
   , sessionMaxTries :: !Int
+  , sessionKeyCache :: !(IORef (Map (AuthType,ByteString,EngineId) ByteString))
   }
 
 data Config = Config
@@ -109,8 +111,6 @@ data PerHostV3 = PerHostV3
   , perHostV3ReceiverBoots :: !Int32
   }
 
-
-
 -- | Only one connection can be open at a time on a given port.
 openSession :: Config -> IO Session
 openSession (Config socketPoolSize timeout retries) = do
@@ -127,7 +127,8 @@ openSession (Config socketPoolSize timeout retries) = do
   aesSaltVar <- newTVarIO (AesSalt 1)
   socketChan <- newChan
   writeList2Chan socketChan allSockets
-  return (Session socketChan socketPoolSize requestIdVar aesSaltVar timeout retries)
+  keyCache <- newIORef Map.empty
+  return (Session socketChan socketPoolSize requestIdVar aesSaltVar timeout retries keyCache)
 
 closeSession :: Session -> IO ()
 closeSession session = replicateM_ (sessionSocketCount session) $ do
@@ -190,14 +191,20 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
       -- setting the reportable flags is very important
       -- for AuthPriv
       let flags = cryptoFlags crypto .|. 0x04
-          mkAuthParams :: RequestId -> PerHostV3 -> (ByteString,ScopedPduData) -> ByteString
+          mkAuthParams :: RequestId -> PerHostV3 -> (ByteString,ScopedPduData) -> IO ByteString
           mkAuthParams reqId phv3 privPair = case cryptoAuth crypto of
-            Nothing -> ByteString.empty
-            Just (AuthParameters typ password) ->
-              -- figure out a way to cache this
-              let key = SnmpEncoding.passwordToKey typ password (perHostV3AuthoritativeEngineId phv3)
-                  serializationWithoutAuth = snd (makeBs (ByteString.replicate 12 0x00) reqId privPair phv3)
-               in SnmpEncoding.mkSign typ key serializationWithoutAuth
+            Nothing -> return ByteString.empty
+            Just (AuthParameters typ password) -> do
+              keyCache <- readIORef (sessionKeyCache session)
+              let triple = (typ,password,perHostV3AuthoritativeEngineId phv3)
+              key <- case Map.lookup triple keyCache of
+                Nothing -> do
+                  let key = SnmpEncoding.passwordToKey typ password (perHostV3AuthoritativeEngineId phv3)
+                  writeIORef (sessionKeyCache session) (Map.insert triple key keyCache)
+                  return key
+                Just key -> return key
+              let serializationWithoutAuth = snd (makeBs (ByteString.replicate 12 0x00) reqId privPair phv3)
+              pure (SnmpEncoding.mkSign typ key serializationWithoutAuth)
           mkPrivParams :: AesSalt -> RequestId -> PerHostV3 -> (ByteString,ScopedPduData)
           mkPrivParams theSalt reqId phv3 = case crypto of
             AuthPriv (AuthParameters authType authPass) (PrivParameters privType privPass) -> case privType of
@@ -228,12 +235,11 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                   spdud
                 -- myMsg2 = trace ("THE MESSAGE TO SEND: " ++ show myMsg) myMsg
              in (myMsg, LB.toStrict $ AsnEncoding.der SnmpEncoding.messageV3 $ myMsg)
-          fullMakeBs :: AesSalt -> RequestId -> PerHostV3 -> (MessageV3, ByteString)
-          fullMakeBs theSalt reqId phv3 =
+          fullMakeBs :: AesSalt -> RequestId -> PerHostV3 -> IO (MessageV3, ByteString)
+          fullMakeBs theSalt reqId phv3 = do
             let privPair = mkPrivParams theSalt reqId phv3
-                authParams = mkAuthParams reqId phv3 privPair
-                newPair = makeBs authParams reqId privPair phv3
-             in newPair
+            authParams <- mkAuthParams reqId phv3 privPair
+            return (makeBs authParams reqId privPair phv3)
           go1 :: Int -> RequestId -> (MessageV3,ByteString) -> Bool -> IO (Either SnmpException Pdu)
           go1 !n1 !requestId (!sentMsg,!bsSent) !engineIdsAcquired = if n1 > 0
             then do
@@ -303,7 +309,8 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                                               requestId' <- nextRequestId (sessionRequestId session)
                                               -- Notice that n1 is not decremented in this
                                               -- situation. This is intentional.
-                                              go1 n1 requestId' (fullMakeBs theSalt requestId' phv3) True
+                                              internalFragment <- fullMakeBs theSalt requestId' phv3
+                                              go1 n1 requestId' internalFragment True
                                         _ -> return (Left (SnmpExceptionNonPduResponseV3 msg))
                                   case messageV3Data msg of
                                     ScopedPduDataEncrypted encrypted -> case crypto of
@@ -325,7 +332,8 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
       let originalPhv3 = PerHostV3 (EngineId "initial-engine-id") 0xFFFFFF 0xEEEEEE
       theSalt <- atomically $ nextSalt (sessionAesSalt session)
       requestId' <- nextRequestId (sessionRequestId session)
-      e <- go1 (sessionMaxTries session) requestId' (fullMakeBs theSalt requestId' originalPhv3) False
+      theFragment <- fullMakeBs theSalt requestId' originalPhv3 
+      e <- go1 (sessionMaxTries session) requestId' theFragment False
       writeChan (sessionSockets session) sock
       return (e >>= fromPdu)
 

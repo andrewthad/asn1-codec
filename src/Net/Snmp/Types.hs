@@ -88,9 +88,9 @@ data HeaderData = HeaderData
 -- data AuthFlags = AuthFlagsNoAuthNoPriv | AuthFlagsAuthNoPriv | AuthFlagsAuthPriv
 
 data AuthType = AuthTypeMd5 | AuthTypeSha
-  deriving (Eq,Show)
+  deriving (Eq,Ord,Show)
 data PrivType = PrivTypeDes | PrivTypeAes
-  deriving (Eq,Show)
+  deriving (Eq,Ord,Show)
 
 data Crypto
   = NoAuthNoPriv
