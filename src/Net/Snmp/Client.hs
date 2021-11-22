@@ -161,7 +161,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                 then return $ Left $ SnmpExceptionNotAllBytesSent bytesSentLen bsLen
                 else do
                   let go2 mperHostV3 = do
-                        (isReadyAction,deregister) <- threadWaitReadSTM (mySockFd sock)
+                        (isReadyAction,deregister) <- threadWaitReadSTM =<< mySockFd sock
                         delay <- registerDelay (sessionTimeoutMicroseconds session)
                         isContentReady <- atomically $ (isReadyAction $> True) <|> (fini delay $> False)
                         deregister
@@ -257,7 +257,7 @@ generalRequest pdusFromRequestId fromPdu (Context session (Destination ip port) 
                 else do
                   let go2 :: IO (Either SnmpException Pdu)
                       go2 = do
-                        (isReadyAction,deregister) <- threadWaitReadSTM (mySockFd sock)
+                        (isReadyAction,deregister) <- threadWaitReadSTM =<< mySockFd sock
                         delay <- registerDelay (sessionTimeoutMicroseconds session)
                         isContentReady <- atomically $ (isReadyAction $> True) <|> (fini delay $> False)
                         deregister
@@ -454,8 +454,8 @@ nextRequestId requestIdVar = atomically $ do
   writeTVar requestIdVar (RequestId i3)
   return (RequestId i3)
 
-mySockFd :: NS.Socket -> System.Posix.Types.Fd
-mySockFd s = System.Posix.Types.Fd (NS.fdSocket s)
+mySockFd :: NS.Socket -> IO System.Posix.Types.Fd
+mySockFd s = System.Posix.Types.Fd <$> NS.unsafeFdSocket s
 
 hexByteStringInternal :: ByteString -> String
 hexByteStringInternal = ByteString.foldr (\w xs -> printf "%02X" w ++ xs) []
