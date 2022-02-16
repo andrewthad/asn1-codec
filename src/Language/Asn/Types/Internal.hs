@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -17,19 +16,13 @@ module Language.Asn.Types.Internal where
 import Data.ByteString (ByteString)
 import Data.Functor.Contravariant (Contravariant(..))
 import Data.Hashable (Hashable(..))
-#if MIN_VERSION_base(4,12,0)
 import Data.Monoid hiding (Ap)
-#else
-import Data.Monoid
-#endif
 
 import Data.Primitive (PrimArray)
-import Data.Semigroup (Semigroup)
 import Data.String
 import Data.Text (Text)
 import Data.Word
 import GHC.Generics (Generic)
-import GHC.Int (Int(..))
 import Prelude hiding (sequence,null)
 import Data.Aeson (ToJSON,FromJSON,FromJSONKey)
 import qualified Data.ByteString.Lazy as LB

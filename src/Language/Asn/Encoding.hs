@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -49,14 +48,10 @@ import Language.Asn.Types.Internal
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder (Builder)
 import Data.Text (Text)
-#if !MIN_VERSION_base(4,11,0)
-import Data.Monoid
-#endif
 import Data.Word
 import Data.Int
 import Data.Bits
 import Data.Primitive (PrimArray,Prim)
-import GHC.Int (Int(..))
 import Data.Foldable hiding (null)
 import qualified Data.Text.Encoding as TE
 import qualified Text.PrettyPrint as PP

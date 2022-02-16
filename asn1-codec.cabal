@@ -37,7 +37,7 @@ library
       TestNetwork
   build-depends:
       aeson >= 1.1.2
-    , base >= 4.9.1.0 && < 5
+    , base >= 4.12 && < 5
     , bytestring >= 0.10
     , containers
     , contravariant >= 1.4
